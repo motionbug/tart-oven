@@ -35,7 +35,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.19"
+const version = "1.24"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -139,6 +139,8 @@ type Config struct {
 	ShutdownCommand string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
 	ShutdownWaitSec int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
 	RunArgs         string   `json:"runArgs"`         // extra args appended to every `tart run`
+	NetPriority     string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec  int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
 	HistoryDays     int      `json:"historyDays"`     // run-history retention in days
 	BearerToken     string   `json:"bearerToken"`     // optional auth; empty = no auth
 }
@@ -166,6 +168,8 @@ func defaultConfig() Config {
 		ShutdownCommand: "sudo shutdown -h now",
 		ShutdownWaitSec: 60,
 		RunArgs:         "",
+		NetPriority:     "auto",
+		BootTimeoutSec:  60,
 		HistoryDays:     60,
 		BearerToken:     "",
 	}
@@ -240,6 +244,7 @@ type VM struct {
 	SSHCheckedAt time.Time `json:"sshCheckedAt,omitempty"` // when SSH was last checked
 	Info         string    `json:"info,omitempty"`         // last "Get info" (status command) output
 	InfoAt       time.Time `json:"infoAt,omitempty"`       // when Info was last fetched
+	Notes        string    `json:"notes,omitempty"`        // user-entered notes for tracking/inventory
 	LastError    string    `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
@@ -293,6 +298,7 @@ type Manager struct {
 	tasks          []*Task              // recent create/clone operations
 	logs           []string             // rolling tart command log (last ~200 lines)
 	hostStats      HostStats            // refreshed ~once a minute
+	hostIP         string               // local IP of the host Mac
 	tartVersion    string               // `tart --version`, refreshed periodically
 	lastSequential string               // last VM started in sequential scheduler mode
 	busy           map[string]bool      // VMs with an op in flight (start/stop)
@@ -326,6 +332,7 @@ type stateSnapshot struct {
 	TartVersion    string    `json:"tartVersion"`
 	Tasks          []*Task   `json:"tasks"`
 	HostStats      HostStats `json:"hostStats"`
+	HostIP         string    `json:"hostIP"`
 	Logs           []string  `json:"logs"`
 }
 
@@ -404,6 +411,12 @@ func (m *Manager) load() {
 	}
 	if m.cfg.HistoryDays < 1 {
 		m.cfg.HistoryDays = d.HistoryDays
+	}
+	if m.cfg.BootTimeoutSec < 10 {
+		m.cfg.BootTimeoutSec = d.BootTimeoutSec
+	}
+	if m.cfg.NetPriority != "wifi" && m.cfg.NetPriority != "ethernet" {
+		m.cfg.NetPriority = "auto"
 	}
 	// Older state files predate the daily window; seed it (enabled) on upgrade.
 	if m.cfg.DailyStart == "" || m.cfg.DailyStop == "" {
@@ -658,23 +671,105 @@ func runJamf() {
 	}
 }
 
-// activeInterface finds the first active hardware network interface, mirroring
-// the original script: walk the service order, pull each Device, and pick the
-// first one whose ifconfig reports "status: active".
-func activeInterface() (string, error) {
+// netService is a parsed network service from networksetup.
+type netService struct {
+	name   string // e.g. "Wi-Fi", "USB 10/100/1000 LAN"
+	device string // e.g. "en0", "en7"
+}
+
+// isWifi returns true for Wi-Fi services.
+func isWifi(name string) bool {
+	return strings.Contains(name, "Wi-Fi")
+}
+
+// isEthernet returns true for wired Ethernet services (USB LAN, Thunderbolt Ethernet, etc).
+func isEthernet(name string) bool {
+	s := strings.ToLower(name)
+	if strings.Contains(s, "bridge") {
+		return false
+	}
+	return strings.Contains(s, "lan") || strings.Contains(s, "ethernet") || strings.Contains(s, "thunderbolt")
+}
+
+// listNetServices parses networksetup -listnetworkserviceorder output.
+func listNetServices() ([]netService, error) {
 	out, err := exec.Command("networksetup", "-listnetworkserviceorder").Output()
 	if err != nil {
-		return "", fmt.Errorf("networksetup: %w", err)
+		return nil, fmt.Errorf("networksetup: %w", err)
 	}
-	re := regexp.MustCompile(`Device:\s*([A-Za-z0-9]+)\)`)
-	for _, mm := range re.FindAllStringSubmatch(string(out), -1) {
-		dev := mm[1]
-		ic, err := exec.Command("ifconfig", dev).Output()
-		if err == nil && strings.Contains(string(ic), "status: active") {
-			return dev, nil
+	// Match lines like: (1) Wi-Fi ... (Hardware Port: Wi-Fi, Device: en0)
+	nameRe := regexp.MustCompile(`^\((\d+)\)\s+(.+)`)
+	devRe := regexp.MustCompile(`Device:\s*([A-Za-z0-9]+)\)`)
+	var services []netService
+	lines := strings.Split(string(out), "\n")
+	for i := 0; i < len(lines); i++ {
+		if m := nameRe.FindStringSubmatch(lines[i]); m != nil {
+			svcName := strings.TrimSpace(m[2])
+			// Next line has the device
+			if i+1 < len(lines) {
+				if dm := devRe.FindStringSubmatch(lines[i+1]); dm != nil {
+					services = append(services, netService{name: svcName, device: dm[1]})
+				}
+			}
 		}
 	}
+	return services, nil
+}
+
+// isActive checks if a network device is active via ifconfig.
+func isActive(device string) bool {
+	out, err := exec.Command("ifconfig", device).Output()
+	return err == nil && strings.Contains(string(out), "status: active")
+}
+
+// activeInterface finds an active network interface, optionally prioritizing
+// Wi-Fi ("wifi") or Ethernet ("ethernet"). Falls back to any active interface.
+func activeInterface(priority string) (string, error) {
+	services, err := listNetServices()
+	if err != nil {
+		return "", err
+	}
+
+	// Collect active interfaces, categorized
+	var preferred, fallback []string
+	for _, svc := range services {
+		if !isActive(svc.device) {
+			continue
+		}
+		match := false
+		switch priority {
+		case "wifi":
+			match = isWifi(svc.name)
+		case "ethernet":
+			match = isEthernet(svc.name)
+		}
+		if match {
+			preferred = append(preferred, svc.device)
+		} else {
+			fallback = append(fallback, svc.device)
+		}
+	}
+
+	if len(preferred) > 0 {
+		return preferred[0], nil
+	}
+	if len(fallback) > 0 {
+		return fallback[0], nil
+	}
 	return "", errors.New("no active network interface found")
+}
+
+// localIP returns the host's local IP address on the active interface.
+func localIP() string {
+	iface, err := activeInterface("auto")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command("ipconfig", "getifaddr", iface).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ---------------------------------------------------------------------------
@@ -803,11 +898,13 @@ func (m *Manager) doRun(name, trigger string) {
 	extra := splitArgs(m.cfg.RunArgs)
 	statusCmd := m.cfg.StatusCommand
 	window := time.Duration(m.cfg.WindowMinutes) * time.Minute
+	bootTimeout := m.cfg.BootTimeoutSec
+	netPriority := m.cfg.NetPriority
 	m.save()
 	m.mu.Unlock()
 	m.broadcast()
 
-	iface, err := activeInterface()
+	iface, err := activeInterface(netPriority)
 	if err != nil {
 		m.logln("run %s: no active network interface: %v", name, err)
 		m.failOp(name, err)
@@ -858,8 +955,8 @@ func (m *Manager) doRun(name, trigger string) {
 		go runJamf()
 	}
 
-	// Resolve the IP (blocks up to 30s).
-	ip, ipErr := m.tartOutputTimeout(45*time.Second, home, "ip", name, "--wait", "30", "--resolver", "arp")
+	// Resolve the IP (blocks up to the configured boot timeout).
+	ip, ipErr := m.tartOutputTimeout(time.Duration(bootTimeout+15)*time.Second, home, "ip", name, "--wait", strconv.Itoa(bootTimeout), "--resolver", "arp")
 	ip = strings.TrimSpace(ip)
 
 	// Boot failure: the VM came up but never handed us an IP. Stop it so it
@@ -867,7 +964,7 @@ func (m *Manager) doRun(name, trigger string) {
 	// pick a different VM.
 	if ipErr != nil || ip == "" {
 		tartOut := runLog.String()
-		m.logln("boot failure %s: no IP after 30s.%s", name, prefixIfNotEmpty(" tart said: ", tartOut))
+		m.logln("boot failure %s: no IP after %ds.%s", name, bootTimeout, prefixIfNotEmpty(" tart said: ", tartOut))
 		m.tartCmd(home, "stop", name, "-t", "10").Run()
 		m.mu.Lock()
 		c := m.runningCmds[name]
@@ -1692,6 +1789,7 @@ func (m *Manager) snapshot() stateSnapshot {
 		TartVersion:    m.tartVersion,
 		Tasks:          m.tasks,
 		HostStats:      m.hostStats,
+		HostIP:         m.hostIP,
 		Logs:           m.logs,
 	}
 }
@@ -2006,6 +2104,33 @@ func (m *Manager) routes() *http.ServeMux {
 		w.Write([]byte(out)) // pass tart's JSON straight through
 	}))
 
+	mux.HandleFunc("/api/vm/notes", m.protect(func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Name  string `json:"name"`
+			Notes string `json:"notes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if b.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		m.mu.Lock()
+		vm := m.vms[b.Name]
+		if vm == nil {
+			m.mu.Unlock()
+			writeJSON(w, map[string]string{"error": "VM not found"})
+			return
+		}
+		vm.Notes = b.Notes
+		m.save()
+		m.mu.Unlock()
+		m.broadcast()
+		writeJSON(w, map[string]bool{"ok": true})
+	}))
+
 	// Install or update tart (downloads the latest release either way).
 	mux.HandleFunc("/api/install-tart", m.protect(func(w http.ResponseWriter, r *http.Request) {
 		go m.installTart()
@@ -2093,6 +2218,12 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.cfg.HistoryDays < 1 {
 		m.cfg.HistoryDays = 60
+	}
+	if m.cfg.BootTimeoutSec < 10 {
+		m.cfg.BootTimeoutSec = 60
+	}
+	if m.cfg.NetPriority != "wifi" && m.cfg.NetPriority != "ethernet" {
+		m.cfg.NetPriority = "auto"
 	}
 	if _, ok := parseHHMM(m.cfg.DailyStart); !ok {
 		m.cfg.DailyStart = "08:00"
@@ -2217,6 +2348,7 @@ func main() {
 	m.checkStorage()
 	m.reconcile()
 	m.updateHostStats()
+	m.hostIP = localIP()
 
 	go m.schedulerLoop()
 
@@ -2243,11 +2375,13 @@ func main() {
 		for range t.C {
 			m.updateHostStats()
 			m.updateTartVersion()
+			m.hostIP = localIP()
 			m.broadcast()
 		}
 	}()
 
 	log.Printf("tart-oven %s", version)
+	log.Printf("host IP: %s", m.hostIP)
 	log.Printf("tart binary: %s", m.cfg.TartAppPath)
 	log.Printf("tart JSON list support: %v", m.tartJSON)
 	log.Printf("state file: %s", m.statePath)

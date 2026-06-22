@@ -9,6 +9,13 @@
     --bg: #0f1115; --panel: #181b21; --panel2: #1f232b; --border: #2a2f3a;
     --text: #e6e9ef; --muted: #9aa3b2; --accent: #4f8cff; --accent2: #3a6fd8;
     --green: #2ecc71; --red: #ff5c5c; --amber: #ffb74d; --grey: #6b7280;
+    --code-bg: #0b0d11; --input-bg: #0f1115;
+  }
+  [data-theme="light"] {
+    --bg: #f4f5f7; --panel: #ffffff; --panel2: #f0f1f3; --border: #d1d5db;
+    --text: #1a1a1a; --muted: #5f6773; --accent: #2563eb; --accent2: #1d4ed8;
+    --green: #16a34a; --red: #dc2626; --amber: #ca8a04; --grey: #9ca3af;
+    --code-bg: #e8e9eb; --input-bg: #ffffff;
   }
   * { box-sizing: border-box; }
   body {
@@ -34,17 +41,24 @@
   .markdown ul, .markdown ol { margin: 8px 0 8px 22px; }
   .markdown li { margin: 3px 0; }
   .markdown code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
-  .markdown pre.md-code { background: #0b0d11; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre; }
+  .markdown pre.md-code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow: auto; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre; }
   .markdown pre.md-code code { background: none; padding: 0; }
   .markdown a { color: var(--accent); }
   .markdown table.md-table { border-collapse: collapse; margin: 10px 0; width: 100%; }
   .markdown .md-table th, .markdown .md-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 12px; vertical-align: top; }
   .markdown .md-table th { background: var(--panel2); }
-  .radio { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-size: 13px; }
+  .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); font-size: 13px; }
+  /* Apple-style toggle switch */
+  .toggle { position: relative; width: 42px; height: 26px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider { position: absolute; inset: 0; background: var(--border); border-radius: 26px; transition: background .2s; }
+  .toggle .slider::before { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .toggle input:checked + .slider { background: var(--green); }
+  .toggle input:checked + .slider::before { transform: translateX(16px); }
   .guide h3 { font-size: 13px; margin: 16px 0 4px; color: var(--text); }
   .guide p { margin: 4px 0; }
-  .cmd { display: flex; align-items: flex-start; gap: 8px; background: #0b0d11; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
-  .cmd code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #c8d0dc; white-space: pre-wrap; word-break: break-all; flex: 1; }
+  .cmd { display: flex; align-items: flex-start; gap: 8px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+  .cmd code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-all; flex: 1; }
   .cmd button { padding: 3px 11px; font-size: 11px; flex: none; }
   .wrap { max-width: 1500px; margin: 0 auto; padding: 18px 22px 60px; }
   .banner {
@@ -110,7 +124,7 @@
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
   th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
-  tr:hover td { background: rgba(255,255,255,.02); }
+  tr:hover td { background: var(--panel2); }
   td.name { width: 240px; max-width: 240px; word-break: break-all; }
   td.name b { font-weight: 600; }
   td.acts { white-space: nowrap; width: 1%; }
@@ -148,16 +162,16 @@
   .ssh-row input { flex: 1; }
 
   #console {
-    background: #0b0d11; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
-    white-space: pre-wrap; max-height: 240px; overflow: auto; color: #c8d0dc;
+    white-space: pre-wrap; max-height: 240px; overflow: auto; color: var(--text);
   }
   #console:empty::before { content: "No output yet. Pick a VM, type a command, and Run — or use the per-VM buttons below."; color: var(--grey); }
   .clog { color: var(--muted); } .cok { color: var(--green); } .cbad { color: var(--red); }
   .logbox {
-    margin: 0; background: #0b0d11; border: 1px solid var(--border); border-radius: 10px;
+    margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
-    white-space: pre-wrap; max-height: 280px; overflow: auto; color: #c8d0dc;
+    white-space: pre-wrap; max-height: 280px; overflow: auto; color: var(--text);
   }
   .logbox:empty::before { content: "No tart commands run yet."; color: var(--grey); }
 
@@ -183,7 +197,22 @@
   .badge.running { color: var(--amber); border-color: rgba(255,183,77,.5); }
   .badge.success { color: var(--green); border-color: rgba(46,204,113,.5); }
   .badge.error { color: var(--red); border-color: rgba(255,92,92,.5); }
-  .task pre { margin: 8px 0 0; background: #0b0d11; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; max-height: 180px; overflow: auto; white-space: pre-wrap; color: #c8d0dc; }
+  .task pre { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; max-height: 180px; overflow: auto; white-space: pre-wrap; color: var(--text); }
+
+  /* Notes column */
+  .notes-cell { display: flex; align-items: center; gap: 6px; max-width: 180px; }
+  .notes-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .icon-btn { background: none; border: none; padding: 4px; cursor: pointer; color: var(--muted); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .icon-btn:hover { color: var(--text); background: var(--panel2); }
+
+  /* Modal */
+  .modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+  .modal.hidden { display: none; }
+  .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.6); }
+  .modal-content { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; width: 400px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  .modal-content h3 { margin: 0 0 14px; font-size: 16px; font-weight: 600; }
+  .modal-content textarea { width: 100%; resize: vertical; min-height: 100px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -242,9 +271,22 @@
     <div class="panel">
       <h2>Available VMs</h2>
       <table>
-        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
-        <tbody id="vmrows"><tr><td colspan="8" class="muted">loading…</td></tr></tbody>
+        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Notes</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
+        <tbody id="vmrows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
       </table>
+    </div>
+
+    <!-- Notes edit modal -->
+    <div id="notesModal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <h3>Notes for <span id="notesVmName"></span></h3>
+        <textarea id="notesText" rows="6" placeholder="Enter notes for this VM…"></textarea>
+        <div class="modal-actions">
+          <button id="notesSave">Save</button>
+          <button id="notesCancel" class="ghost">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -346,7 +388,7 @@
         <div class="field"><label>Selection mode</label><select id="schedulerMode"><option value="random">Random</option><option value="sequential">Sequential (A→Z)</option></select><small>How the scheduler picks the next VM</small></div>
         <div class="field"><label>Daily start time</label><input type="time" id="dailyStart"><small>Begin auto-running VMs</small></div>
         <div class="field"><label>Daily stop time</label><input type="time" id="dailyStop"><small>Stop running VMs</small></div>
-        <div class="field"><label>&nbsp;</label><label class="radio"><input type="checkbox" id="dailyEnabled"> Limit scheduler to daily hours</label></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="dailyEnabled"><span class="slider"></span></span> Limit scheduler to daily hours</label></div>
         <div class="field" style="grid-column: 1 / -1;"><label>Excluded VM names (one per line or comma-separated)</label><textarea id="excluded"></textarea></div>
       </div>
     </div>
@@ -359,6 +401,8 @@
         <div class="field"><label>Shared dir (host_resources)</label><input type="text" id="sharedDir"></div>
         <div class="field"><label>Tart binary path</label><input type="text" id="tartAppPath"><small>Full path to the tart binary</small></div>
         <div class="field" style="grid-column: 1 / -1;"><label>Custom run arguments (appended to every <span class="mono">tart run</span>)</label><input type="text" id="runArgs" placeholder='e.g. --vnc --no-audio --net-host'><small>Quote values with spaces, e.g. --net-bridged="Wi-Fi"</small></div>
+        <div class="field"><label>Boot timeout (s)</label><input type="number" id="bootTimeoutSec" min="10"><small>Wait for IP before declaring boot failure</small></div>
+        <div class="field"><label>Network interface</label><select id="netPriority"><option value="auto">Auto (first available)</option><option value="wifi">Prioritize Wi-Fi</option><option value="ethernet">Prioritize Ethernet</option></select><small>Which network to use for VM bridging</small></div>
       </div>
       <div class="actions">
         <button id="updateTartBtn" class="ghost">⇩ Update Tart</button>
@@ -384,8 +428,10 @@
         <div class="field"><label>Listen (host:port — restart to apply)</label><input type="text" id="listen"></div>
         <div class="field"><label>Bearer token (optional auth)</label><input type="password" id="bearerToken" placeholder="empty = no auth"></div>
         <div class="field"><label>History retention (days)</label><input type="number" id="historyDays" min="1"></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="lightMode"><span class="slider"></span></span> Light mode</label></div>
       </div>
       <div class="actions">
+        <button id="srvScreen" class="ghost vnc" title="Open Screen Sharing to the host Mac">🖥 Screen share with host</button>
         <button id="srvRestart" class="ghost" title="Restart the Tart Oven server">⟳ Restart server</button>
         <button id="srvStop" class="danger" title="Stop the Tart Oven server">■ Stop server</button>
       </div>
@@ -431,6 +477,16 @@
 
 <script>
 "use strict";
+
+// ---- theme ----
+function setTheme(light) {
+  document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
+  try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+}
+function getTheme() {
+  try { return localStorage.getItem("theme"); } catch (e) { return null; }
+}
+if (getTheme() === "light") document.documentElement.setAttribute("data-theme", "light");
 
 let token = "";          // auth token, in-memory only
 let clockSkew = 0;       // serverNow - clientNow (ms)
@@ -501,6 +557,8 @@ function fillConfig(c) {
   set("listen", c.listen);
   set("bearerToken", c.bearerToken || "");
   set("runArgs", c.runArgs || "");
+  set("bootTimeoutSec", c.bootTimeoutSec || 60);
+  set("netPriority", c.netPriority || "auto");
   set("excluded", (c.excluded || []).join("\n"));
   configLoaded = true;
 }
@@ -519,7 +577,7 @@ function readConfig() {
     excluded,
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
-    statusCommand: str("statusCommand"), runArgs: str("runArgs"),
+    statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
     bearerToken: document.getElementById("bearerToken").value
   };
@@ -601,6 +659,17 @@ function infoCell(vm) {
   return '<div class="infobox" title="fetched ' + esc(fmtDateTime(vm.infoAt)) + '">' + esc(vm.info) + '</div>';
 }
 
+// Notes column: user-entered notes with pencil edit button.
+function notesCell(vm) {
+  const preview = vm.notes ? esc(vm.notes.length > 40 ? vm.notes.slice(0, 40) + '…' : vm.notes) : '';
+  const title = vm.notes ? esc(vm.notes) : 'No notes';
+  return '<div class="notes-cell" title="' + title + '">' +
+    '<span class="notes-preview">' + (preview || '<span class="muted">—</span>') + '</span>' +
+    '<button class="icon-btn edit-notes" data-vm="' + esc(vm.name) + '" title="Edit notes">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+    '</button></div>';
+}
+
 // ---- toasts ----
 function toast(title, msg, type) {
   const c = document.getElementById("toasts");
@@ -668,10 +737,10 @@ function render(state) {
   const pb = document.getElementById("pauseBtn");
   const ss = document.getElementById("schedStatus");
   if (state.config.paused) {
-    pb.textContent = "▶ Turn scheduler ON"; pb.className = "big resume";
+    pb.textContent = "▶ Turn scheduler ON"; pb.className = "big pause";
     ss.textContent = "Scheduler is OFF — no automatic runs.";
   } else {
-    pb.textContent = "⏸ Turn scheduler OFF"; pb.className = "big pause";
+    pb.textContent = "⏸ Turn scheduler OFF"; pb.className = "big resume";
     let s = "Scheduler is ON — every " + state.config.intervalMinutes + " min, window " +
       state.config.windowMinutes + " min, up to " + state.config.maxConcurrent + " at once" +
       " (" + (state.config.schedulerMode === "sequential" ? "sequential" : "random") + ").";
@@ -725,7 +794,7 @@ function renderRunning(vms) {
 
 function renderTable(vms) {
   const tbody = document.getElementById("vmrows");
-  if (!vms.length) { tbody.innerHTML = '<tr><td colspan="8" class="muted">No VMs found at this storage path.</td></tr>'; return; }
+  if (!vms.length) { tbody.innerHTML = '<tr><td colspan="9" class="muted">No VMs found at this storage path.</td></tr>'; return; }
   tbody.innerHTML = vms.map(vm => {
     const tagList = [];
     if (vm.template) tagList.push('<span class="tag">TEMPLATE</span>');
@@ -744,6 +813,7 @@ function renderTable(vms) {
       '<td>' + ip + '</td>' +
       '<td>' + sshCell(vm) + '</td>' +
       '<td class="info">' + infoCell(vm) + '</td>' +
+      '<td class="notes">' + notesCell(vm) + '</td>' +
       '<td class="muted" title="' + esc(fmtDateTime(vm.lastRun)) + '">' + fmtAgo(vm.lastRun) + '</td>' +
       '<td class="mono" data-stop="' + (vm.stopAt || "") + '" data-state="' + vm.state + '">' + rem + '</td>' +
       '<td class="acts"><div class="row-actions">' +
@@ -778,6 +848,44 @@ function fillSshTargets(vms) {
 document.getElementById("sshRun").onclick = sendCmd;
 document.getElementById("sshCommand").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 document.getElementById("sshSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
+
+// ---- Notes modal ----
+let notesVmName = "";
+function openNotesModal(vmName) {
+  notesVmName = vmName;
+  const vm = latest && latest.vms.find(v => v.name === vmName);
+  document.getElementById("notesVmName").textContent = vmName;
+  document.getElementById("notesText").value = vm ? (vm.notes || "") : "";
+  document.getElementById("notesModal").classList.remove("hidden");
+  document.getElementById("notesText").focus();
+}
+function closeNotesModal() {
+  document.getElementById("notesModal").classList.add("hidden");
+  notesVmName = "";
+}
+async function saveNotes() {
+  const notes = document.getElementById("notesText").value;
+  try {
+    await api("/api/vm/notes", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: notesVmName, notes })
+    });
+    closeNotesModal();
+  } catch (e) {
+    toast("Notes error", e.message, "bad");
+  }
+}
+document.getElementById("notesSave").onclick = saveNotes;
+document.getElementById("notesCancel").onclick = closeNotesModal;
+document.querySelector("#notesModal .modal-backdrop").onclick = closeNotesModal;
+document.getElementById("notesText").addEventListener("keydown", e => {
+  if (e.key === "Escape") closeNotesModal();
+});
+// Event delegation for pencil buttons
+document.getElementById("vmrows").addEventListener("click", e => {
+  const btn = e.target.closest(".edit-notes");
+  if (btn) openNotesModal(btn.dataset.vm);
+});
 
 async function sendCmd() {
   const name = document.getElementById("sshTarget").value;
@@ -1077,6 +1185,13 @@ function copyCmd(id, btn) {
 ["sshUser", "sshKey"].forEach(id => document.getElementById(id).addEventListener("input", updateSshGuide));
 
 // ---- server control ----
+document.getElementById("srvScreen").onclick = () => {
+  if (latest && latest.hostIP) {
+    openVNC(latest.hostIP);
+  } else {
+    toast("Screen share", "Host IP not available", "bad");
+  }
+};
 document.getElementById("srvRestart").onclick = async () => {
   if (!confirm("Restart the Tart Oven server? The dashboard will reconnect automatically.")) return;
   try {
@@ -1093,6 +1208,9 @@ document.getElementById("srvStop").onclick = async () => {
     document.getElementById("hmeta").textContent = "server stopped";
   } catch (e) { toast("Stop failed", e.message, "bad"); }
 };
+// Light mode toggle
+document.getElementById("lightMode").checked = getTheme() === "light";
+document.getElementById("lightMode").onchange = (e) => setTheme(e.target.checked);
 
 // ---- Helper Guide (render embedded README.md) ----
 async function loadReadme() {
