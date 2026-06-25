@@ -36,7 +36,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.25"
+const version = "1.26"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -208,6 +208,7 @@ type Config struct {
 	BootTimeoutSec  int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
 	HistoryDays     int      `json:"historyDays"`     // run-history retention in days
 	LogPath         string   `json:"logPath"`         // path to log file (rotation at 5MB)
+	ServerLabel     string   `json:"serverLabel"`     // custom label to identify this server instance
 }
 
 func defaultConfig() Config {
@@ -216,15 +217,15 @@ func defaultConfig() Config {
 		VMStoragePath:   fallbackStoragePath, // /Users/Shared/Tart
 		SharedDir:       defaultSharedDir,
 		TartAppPath:     defaultTartBin,
-		IntervalMinutes: 10,
+		IntervalMinutes: 5,
 		WindowMinutes:   120,
 		MaxConcurrent:   1,
-		SchedulerMode:   "random",
+		SchedulerMode:   "sequential",
 		Excluded:        []string{},
 		JamfRecon:       false,
 		Paused:          true, // scheduler OFF until the user turns it on
 		DailyEnabled:    true,
-		DailyStart:      "08:00",
+		DailyStart:      "08:30",
 		DailyStop:       "22:00",
 		SSHUser:         "admin",
 		SSHKey:          "~/.ssh/tart-oven",
@@ -233,7 +234,7 @@ func defaultConfig() Config {
 		ShutdownCommand: "sudo shutdown -h now",
 		ShutdownWaitSec: 60,
 		RunArgs:         "",
-		NetPriority:     "auto",
+		NetPriority:     "wifi",
 		BootTimeoutSec:  60,
 		HistoryDays:     60,
 		LogPath:         "~/Library/Logs/tart-oven.log",
@@ -1822,6 +1823,66 @@ func (m *Manager) stopServer() {
 	os.Exit(0)
 }
 
+const launchAgentLabel = "com.tartoven.agent"
+const launchAgentPlist = "/Library/LaunchAgents/com.tartoven.agent.plist"
+
+func (m *Manager) handleLaunchAgent(w http.ResponseWriter, r *http.Request) {
+	uid := os.Getuid()
+	domain := fmt.Sprintf("gui/%d", uid)
+
+	if r.Method == http.MethodGet {
+		installed := false
+		if _, err := os.Stat(launchAgentPlist); err == nil {
+			installed = true
+		}
+		enabled := m.launchAgentEnabled(domain)
+		writeJSON(w, map[string]any{"installed": installed, "enabled": enabled})
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	action := "disable"
+	if req.Enabled {
+		action = "enable"
+	}
+	target := fmt.Sprintf("%s/%s", domain, launchAgentLabel)
+	out, err := exec.Command("launchctl", action, target).CombinedOutput()
+	if err != nil {
+		m.logln("launchctl %s %s failed: %v: %s", action, target, err, string(out))
+		http.Error(w, fmt.Sprintf("launchctl %s failed: %v", action, err), http.StatusInternalServerError)
+		return
+	}
+	m.logln("launchagent %s: %s", action, target)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (m *Manager) launchAgentEnabled(domain string) bool {
+	out, err := exec.Command("launchctl", "print-disabled", domain).CombinedOutput()
+	if err != nil {
+		return true // assume enabled if we can't check
+	}
+	// Output contains lines like: "com.tartoven.agent" => disabled
+	// If not listed or listed without "disabled", it's enabled.
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, launchAgentLabel) && strings.Contains(line, "disabled") {
+			return false
+		}
+	}
+	return true
+}
+
 // ---------------------------------------------------------------------------
 // SSE / broadcast
 // ---------------------------------------------------------------------------
@@ -2200,6 +2261,8 @@ func (m *Manager) routes() *http.ServeMux {
 		writeJSON(w, map[string]bool{"ok": true})
 		go m.stopServer()
 	})
+
+	mux.HandleFunc("/api/server/launchagent", m.handleLaunchAgent)
 
 	mux.HandleFunc("/api/config", m.handleConfig)
 	mux.HandleFunc("/events", m.handleEvents)

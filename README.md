@@ -17,7 +17,7 @@ This VM orchestration server fully relies on Tart and Apple's virtualization fra
   the **Info** column shows the (multi-line) output. Clicking **Get info**
   refreshes both. Red usually means the key isn't set up.
 - **History logs** — every vm run is captured in
-  a rolling log for beter visibility.
+  a rolling log for better visibility.
 - **Per-VM actions** — Run, Stop, Restart, Send command (SSH), Get info (SSH
   status command, on demand only), and Screen (open macOS Screen Sharing).
 - **VM management** — this server detects Tart installations and can automatically install Tart when missing. It also lets you create/clone/edit/delete VMs.
@@ -27,14 +27,9 @@ This VM orchestration server fully relies on Tart and Apple's virtualization fra
 ## WebUI tabs
 
 - **Dashboard** — scheduler ON/OFF, a **Refresh VM status** button (force a
-  re-check against tart and clear any stuck statuses), currently-running VMs
-  (with SSH/Info and a Get-info button), an SSH command tool (running VMs only,
-  with an optional transient sudo password), the full fleet table, and the Tart
-  logs. Last known IP / SSH status / Info are retained after a VM stops.
-- **History** — a log entry for every VM start (manual or scheduler), with
-  duration, IP and trigger. Searchable by name. Retained for **60 days** by
-  default (configurable via `historyDays`); older entries are pruned on save and
-  on startup.
+  re-check against tart and clear any stuck statuses), the full fleet table
+  (with search/filter), and per-VM actions. Last known IP / SSH status / Info
+  are retained after a VM stops.
 - **VM Management** — create/clone VMs (clone a template, or create from an IPSW
   path / "latest"; pick count, CPU, RAM, disk, display, random MAC/serial), edit
   an existing VM's settings (`tart set`), rename, and delete. Long create/clone
@@ -44,8 +39,11 @@ This VM orchestration server fully relies on Tart and Apple's virtualization fra
 - **Configuration** — settings grouped into VM Scheduler; Tart Settings (storage
   paths, Tart binary path, custom run arguments, the storage-mount banner, and an
   **Update Tart** button showing the installed Tart version); SSH & Commands; and
-  Server Settings (listen/bearer token + Restart/Stop server). Also has the SSH
+  Server Settings (server label, listen address, history retention, light/dark mode,
+  launch at login toggle, and Restart/Stop server buttons). Also has the SSH
   setup guide.
+- **Logs** — Tart logs, Activity (create/clone task output), and Run history
+  (searchable, 60-day retention by default).
 - **Helper Guide** — this README, rendered in-app.
 
 ## Build
@@ -64,7 +62,7 @@ That produces one static binary, `tart-oven`. State and configuration lives in
 
 ```sh
 cd /Path/To/tart-oven # e.g.: cd /Library/Application\ Support/Tart\ Oven 
-./tart-oven                      # uses config from state.json (default 127.0.0.1:8080)
+./tart-oven                      # uses config from state.json (default 127.0.0.1:9000)
 ./tart-oven -listen 0.0.0.0:9000 # override the bind address
 ```
 
@@ -81,7 +79,7 @@ The .pkg installs:
 - `/Library/LaunchAgents/com.tartoven.agent.plist` — the auto-start agent
 
 …and its **postinstall** loads the agent in the logged-in user's GUI session and
-opens `http://127.0.0.1:8080` in the default browser. Double click on the .PKG file 
+opens `http://127.0.0.1:9000` in the default browser. Double click on the .PKG file 
 or install it with:
 
 ```sh
@@ -101,21 +99,13 @@ signing certificate) instead of using `SIGN_IDENTITY`.
 
 ## Access from another machine on the LAN
 
-It binds to `127.0.0.1:8080` by default (localhost only). To reach it from
-another machine, set **Listen** to `0.0.0.0:8080` in the Configuration tab (or
-`-listen 0.0.0.0:8080`) and restart, then from your MacBook:
+It binds to `127.0.0.1:9000` by default (localhost only). To reach it from
+another machine, set **Listen** to `0.0.0.0:9000` in the Configuration tab (or
+`-listen 0.0.0.0:9000`) and restart, then from your MacBook:
 
 ```
-http://<host-mac-ip>:8080
+http://<host-mac-ip>:9000
 ```
-
-### Optional auth
-
-Leave the **Bearer token** field empty for no auth (default). Set it to require
-`Authorization: Bearer <token>` on all API/SSE calls. The dashboard prompts for
-the token on a 401 and keeps it in memory for the session. (The dashboard HTML
-itself is always served so the page can load and prompt; only the API and the
-event stream are protected.)
 
 ### Screen Sharing
 
@@ -140,10 +130,12 @@ enabled in its Sharing settings.
 | POST | `/api/vm/set`    | `{name,cpu,memory,diskSize,display,randomMac,randomSerial}` | `tart set` (VM must be stopped) |
 | POST | `/api/vm/rename` | `{name,newName}` | `tart rename` (stopped) |
 | POST | `/api/vm/delete` | `{name}` | `tart delete` (stopped) |
+| POST | `/api/vm/notes`  | `{name,notes,tags}` | update VM notes and tags |
 | GET  | `/api/vm/get`    | `?name=` | `tart get --format json` (for the edit form) |
 | POST | `/api/install-tart` | — | download latest tart from GitHub → /Applications |
 | POST | `/api/server/restart` | — | re-exec the tart-oven process |
 | POST | `/api/server/stop` | — | stop the tart-oven process (boots out the agent) |
+| GET/POST | `/api/server/launchagent` | `{enabled}` | get/set launch-at-login state |
 | GET/POST | `/api/config` | Config JSON | read / update config |
 | GET  | `/events`     | — | SSE state stream |
 | GET  | `/`           | — | the dashboard |

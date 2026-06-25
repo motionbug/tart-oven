@@ -27,6 +27,7 @@
     padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--panel);
   }
   header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .server-label { font-size: 17px; font-weight: 600; color: var(--cyan); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 24px; }
   header .meta { color: var(--muted); font-size: 12px; }
   .hostbar { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; justify-content: flex-end; }
   .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
@@ -190,6 +191,8 @@
   }
   .toast.bad { border-left-color: var(--red); }
   .toast b { display: block; margin-bottom: 2px; }
+  .toast .log-link { margin-left: 8px; color: var(--cyan); text-decoration: none; font-size: 12px; }
+  .toast .log-link:hover { text-decoration: underline; }
   @keyframes slidein { from { transform: translateX(24px); opacity: 0; } }
 
   /* tasks / activity */
@@ -217,6 +220,7 @@
 <header>
   <h1>🖥️ Tart Oven</h1>
   <div class="hostbar">
+    <span id="serverLabelDisplay" class="server-label"></span>
     <div class="stat"><span class="stat-label">CPU (5 min)</span><span id="statCpu" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">RAM</span><span id="statRam" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">VM disk</span><span id="statDisk" class="stat-val">—</span></div>
@@ -399,9 +403,12 @@
     <div class="panel">
       <h2>Server Settings</h2>
       <div class="grid">
+        <div class="field"><label>Server label</label><input type="text" id="serverLabel" maxlength="100" placeholder="e.g. Mac Mini #1"></div>
         <div class="field"><label>Listen (host:port — restart to apply)</label><input type="text" id="listen"></div>
+        <div class="field"><label>Log file path</label><input type="text" id="logPath" placeholder="~/Library/Logs/tart-oven.log"></div>
         <div class="field"><label>History retention (days)</label><input type="number" id="historyDays" min="1"></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="lightMode"><span class="slider"></span></span> Light mode</label></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="launchAtBoot"><span class="slider"></span></span> Launch at login</label><small id="launchAtBootStatus" class="muted"></small></div>
       </div>
       <div class="actions">
         <button id="srvScreen" class="ghost vnc" title="Open Screen Sharing to the host Mac">🖥 Screen share with host</button>
@@ -440,17 +447,17 @@
 
   <!-- ================= TAB 4: LOGS ================= -->
   <div id="tab-logs" class="tab">
-    <div class="panel">
+    <div class="panel" id="panel-tart-logs">
       <h2>Tart logs</h2>
       <pre id="tartLogs" class="logbox"></pre>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="panel-activity">
       <h2>Activity</h2>
       <div id="tasks" style="max-height:200px;overflow:auto"><div class="muted">No recent create/clone operations.</div></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="panel-history">
       <h2>Run history</h2>
       <div class="searchbar">
         <input type="text" id="histSearch" placeholder="🔎 Search by VM name…" autocomplete="off">
@@ -545,6 +552,8 @@ function fillConfig(c) {
   set("bootTimeoutSec", c.bootTimeoutSec || 60);
   set("netPriority", c.netPriority || "auto");
   set("excluded", (c.excluded || []).join("\n"));
+  set("serverLabel", c.serverLabel || "");
+  set("logPath", c.logPath || "");
   configLoaded = true;
 }
 function readConfig() {
@@ -563,7 +572,8 @@ function readConfig() {
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
-    shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec")
+    shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
+    serverLabel: str("serverLabel"), logPath: str("logPath")
   };
 }
 async function saveConfig(extra) {
@@ -653,11 +663,24 @@ function tagsHtml(vm) {
 }
 
 // ---- toasts ----
-function toast(title, msg, type) {
+// logPanel: optional panel ID to link to (e.g. "panel-tart-logs", "panel-activity", "panel-history")
+function toast(title, msg, type, logPanel) {
   const c = document.getElementById("toasts");
   const d = document.createElement("div");
   d.className = "toast" + (type === "bad" ? " bad" : "");
-  d.innerHTML = "<b>" + esc(title) + "</b>" + esc(msg);
+  let html = "<b>" + esc(title) + "</b>" + esc(msg);
+  if (logPanel) {
+    html += ' <a href="#" class="log-link" data-panel="' + logPanel + '">See logs</a>';
+  }
+  d.innerHTML = html;
+  if (logPanel) {
+    d.querySelector(".log-link").onclick = (e) => {
+      e.preventDefault();
+      showTab("logs");
+      const panel = document.getElementById(logPanel);
+      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  }
   c.appendChild(d);
   setTimeout(() => {
     d.style.transition = "opacity .3s"; d.style.opacity = "0";
@@ -674,7 +697,7 @@ function checkErrors(vms) {
   vms.forEach(vm => {
     const e = vm.lastError || "";
     if (seenFirstSnapshot && e && e !== prevErrors[vm.name]) {
-      toast(vm.name, e, "bad");
+      toast(vm.name, e, "bad", "panel-tart-logs");
     }
     prevErrors[vm.name] = e;
   });
@@ -687,7 +710,7 @@ function render(state) {
   clockSkew = new Date(state.now).getTime() - Date.now();
 
   document.getElementById("hmeta").textContent =
-    "v" + state.version + " · " + state.vms.length + " VMs · tart json: " + (state.tartJSON ? "yes" : "table");
+    "v" + state.version + " · " + state.vms.length + " VMs";
 
   // host health stats (refreshed server-side ~once a minute)
   const hs = state.hostStats || {};
@@ -724,6 +747,11 @@ function render(state) {
   }
 
   if (!configLoaded) fillConfig(state.config);
+
+  // Update server label in header and page title
+  const label = state.config.serverLabel || "";
+  document.getElementById("serverLabelDisplay").textContent = label;
+  document.title = label ? label + " — Tart Oven" : "Tart Oven";
 
   renderTable(state.vms);
   fillSshTargets(state.vms);
@@ -1007,7 +1035,7 @@ document.getElementById("createBtn").onclick = async () => {
   if (mode === "clone" && !body.source) { toast("Create", "Pick a source VM to clone.", "bad"); return; }
   try {
     const res = await api("/api/vm/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (res.ok) toast("Create", "Started creating " + body.count + " VM(s). Watch Activity.", "");
+    if (res.ok) toast("Create", "Started creating " + body.count + " VM(s).", "", "panel-activity");
   } catch (e) { toast("Create failed", e.message, "bad"); }
 };
 
@@ -1043,7 +1071,7 @@ document.getElementById("editBtn").onclick = async () => {
       const res = await api("/api/vm/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, newName }) });
       const d = await res.json();
       if (d.error) { toast("Rename failed", d.error, "bad"); return; }
-      toast("Rename", name + " → " + newName, "");
+      toast("Rename", name + " → " + newName, "", "panel-tart-logs");
       document.getElementById("renameNew").value = "";
     } catch (e) { toast("Rename failed", e.message, "bad"); return; }
   }
@@ -1061,7 +1089,7 @@ document.getElementById("editBtn").onclick = async () => {
       const res = await api("/api/vm/set", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await res.json();
       if (d.error) toast("Edit failed", d.error, "bad");
-      else toast("Edit", body.name + " updated.", "");
+      else toast("Edit", body.name + " updated.", "", "panel-tart-logs");
     } catch (e) { toast("Edit failed", e.message, "bad"); }
   }
   loadVMInfo();
@@ -1075,7 +1103,7 @@ document.getElementById("deleteBtn").onclick = async () => {
     const res = await api("/api/vm/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
     const d = await res.json();
     if (d.error) toast("Delete failed", d.error, "bad");
-    else toast("Delete", name + " deleted.", "");
+    else toast("Delete", name + " deleted.", "", "panel-tart-logs");
   } catch (e) { toast("Delete failed", e.message, "bad"); }
 };
 
@@ -1108,7 +1136,7 @@ document.getElementById("installTartBtn").onclick = async (e) => {
     const res = await api("/api/install-tart", { method: "POST" });
     const d = await res.json();
     if (d.error) toast("Install Tart", d.error, "bad");
-    else { toast("Install Tart", "Downloading & installing… progress in VM Management → Activity.", ""); showTab("vmm"); }
+    else toast("Install Tart", "Downloading & installing…", "", "panel-activity");
   } catch (err) { toast("Install failed", err.message, "bad"); }
   setTimeout(() => { btn.disabled = false; btn.textContent = "Install Tart"; }, 4000);
 };
@@ -1121,7 +1149,7 @@ document.getElementById("updateTartBtn").onclick = async (e) => {
     const res = await api("/api/install-tart", { method: "POST" });
     const d = await res.json();
     if (d.error) toast("Update Tart", d.error, "bad");
-    else { toast("Update Tart", "Downloading & installing latest… progress in VM Management → Activity.", ""); showTab("vmm"); }
+    else toast("Update Tart", "Downloading & installing latest…", "", "panel-activity");
   } catch (err) { toast("Update failed", err.message, "bad"); }
   setTimeout(() => { btn.disabled = false; btn.textContent = "⇩ Update Tart"; }, 4000);
 };
@@ -1169,7 +1197,7 @@ document.getElementById("srvRestart").onclick = async () => {
   if (!confirm("Restart the Tart Oven server? The dashboard will reconnect automatically.")) return;
   try {
     await api("/api/server/restart", { method: "POST" });
-    toast("Server", "Restarting… reconnecting shortly.", "");
+    toast("Server", "Restarting… reconnecting shortly.", "", "panel-tart-logs");
     document.getElementById("hmeta").textContent = "restarting…";
   } catch (e) { toast("Restart failed", e.message, "bad"); }
 };
@@ -1184,6 +1212,38 @@ document.getElementById("srvStop").onclick = async () => {
 // Light mode toggle
 document.getElementById("lightMode").checked = getTheme() === "light";
 document.getElementById("lightMode").onchange = (e) => setTheme(e.target.checked);
+
+// Launch at login toggle
+(async function initLaunchAgent() {
+  const toggle = document.getElementById("launchAtBoot");
+  const status = document.getElementById("launchAtBootStatus");
+  try {
+    const res = await api("/api/server/launchagent");
+    const data = await res.json();
+    if (!data.installed) {
+      toggle.disabled = true;
+      status.textContent = "(LaunchAgent not installed)";
+      return;
+    }
+    toggle.checked = data.enabled;
+    toggle.onchange = async (e) => {
+      try {
+        await api("/api/server/launchagent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: e.target.checked })
+        });
+        toast("Launch at login", e.target.checked ? "Enabled" : "Disabled", "", "panel-tart-logs");
+      } catch (err) {
+        toast("Failed", err.message, "bad");
+        toggle.checked = !e.target.checked;
+      }
+    };
+  } catch (e) {
+    toggle.disabled = true;
+    status.textContent = "(unavailable)";
+  }
+})();
 
 // ---- Helper Guide (render embedded README.md) ----
 async function loadReadme() {
