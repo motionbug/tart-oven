@@ -6,7 +6,7 @@ set -u
 PLIST="/Library/LaunchAgents/com.tartoven.agent.plist"
 BIN="/Library/Application Support/Tart Oven/tart-oven"
 LABEL="com.tartoven.agent"
-URL="http://127.0.0.1:8080"
+URL="http://127.0.0.1:9000"
 
 # Make sure permissions are sane regardless of how the payload was built.
 chmod 755 "$BIN" 2>/dev/null || true
