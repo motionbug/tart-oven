@@ -17,6 +17,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -35,7 +36,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.24"
+const version = "1.25"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -110,6 +111,70 @@ func (b *boundedBuffer) String() string {
 	return strings.TrimSpace(string(b.buf))
 }
 
+// rotatingWriter wraps a file and rotates it when it exceeds maxBytes.
+// Thread-safe for concurrent writes.
+type rotatingWriter struct {
+	mu       sync.Mutex
+	path     string
+	maxBytes int64
+	file     *os.File
+}
+
+func newRotatingWriter(path string, maxBytes int64) (*rotatingWriter, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return &rotatingWriter{path: path, maxBytes: maxBytes, file: f}, nil
+}
+
+func (w *rotatingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	fi, err := w.file.Stat()
+	if err == nil && fi.Size()+int64(len(p)) > w.maxBytes {
+		w.file.Close()
+		os.Rename(w.path, w.path+".1")
+		w.file, _ = os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	}
+	return w.file.Write(p)
+}
+
+func (w *rotatingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Close()
+}
+
+// setupLogging configures log output to both stderr and a rotating file.
+func setupLogging(logPath string) {
+	if logPath == "" {
+		return
+	}
+	logPath = expandHome(logPath)
+	rw, err := newRotatingWriter(logPath, 5*1024*1024) // 5 MB max
+	if err != nil {
+		log.Printf("warning: could not open log file %s: %v (logging to stderr only)", logPath, err)
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, rw))
+	log.SetFlags(log.LstdFlags)
+}
+
+// expandHome replaces a leading ~ with the user's home directory.
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -142,12 +207,12 @@ type Config struct {
 	NetPriority     string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
 	BootTimeoutSec  int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
 	HistoryDays     int      `json:"historyDays"`     // run-history retention in days
-	BearerToken     string   `json:"bearerToken"`     // optional auth; empty = no auth
+	LogPath         string   `json:"logPath"`         // path to log file (rotation at 5MB)
 }
 
 func defaultConfig() Config {
 	return Config{
-		Listen:          "127.0.0.1:8080",
+		Listen:          "127.0.0.1:9000",
 		VMStoragePath:   fallbackStoragePath, // /Users/Shared/Tart
 		SharedDir:       defaultSharedDir,
 		TartAppPath:     defaultTartBin,
@@ -164,14 +229,14 @@ func defaultConfig() Config {
 		SSHUser:         "admin",
 		SSHKey:          "~/.ssh/tart-oven",
 		SSHTimeoutSec:   15,
-		StatusCommand:   `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion`,
+		StatusCommand:   `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
 		ShutdownCommand: "sudo shutdown -h now",
 		ShutdownWaitSec: 60,
 		RunArgs:         "",
 		NetPriority:     "auto",
 		BootTimeoutSec:  60,
 		HistoryDays:     60,
-		BearerToken:     "",
+		LogPath:         "~/Library/Logs/tart-oven.log",
 	}
 }
 
@@ -245,6 +310,7 @@ type VM struct {
 	Info         string    `json:"info,omitempty"`         // last "Get info" (status command) output
 	InfoAt       time.Time `json:"infoAt,omitempty"`       // when Info was last fetched
 	Notes        string    `json:"notes,omitempty"`        // user-entered notes for tracking/inventory
+	Tags         []string  `json:"tags,omitempty"`         // user-defined tags for grouping/filtering
 	LastError    string    `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
@@ -423,6 +489,10 @@ func (m *Manager) load() {
 		m.cfg.DailyEnabled = true
 		m.cfg.DailyStart = d.DailyStart
 		m.cfg.DailyStop = d.DailyStop
+	}
+	// Older state files predate file logging; seed with default path.
+	if m.cfg.LogPath == "" {
+		m.cfg.LogPath = d.LogPath
 	}
 	if p.VMs != nil {
 		m.vms = p.VMs
@@ -1815,30 +1885,6 @@ func (m *Manager) broadcast() {
 // HTTP
 // ---------------------------------------------------------------------------
 
-func (m *Manager) authed(r *http.Request) bool {
-	m.mu.Lock()
-	tok := m.cfg.BearerToken
-	m.mu.Unlock()
-	if tok == "" {
-		return true
-	}
-	if r.Header.Get("Authorization") == "Bearer "+tok {
-		return true
-	}
-	// EventSource can't set headers, so allow ?token= as well.
-	return r.URL.Query().Get("token") == tok
-}
-
-func (m *Manager) protect(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !m.authed(r) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		h(w, r)
-	}
-}
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
@@ -1872,7 +1918,7 @@ func (m *Manager) routes() *http.ServeMux {
 		w.Write(indexHTML)
 	})
 
-	mux.HandleFunc("/api/readme", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/readme", func(w http.ResponseWriter, r *http.Request) {
 		b, err := content.ReadFile("README.md")
 		if err != nil {
 			http.Error(w, "readme not embedded", http.StatusNotFound)
@@ -1880,18 +1926,18 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Write(b)
-	}))
+	})
 
-	mux.HandleFunc("/api/vms", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vms", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, m.snapshot())
-	}))
+	})
 
-	mux.HandleFunc("/api/refresh", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		go m.forceRefresh()
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/run", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/run", func(w http.ResponseWriter, r *http.Request) {
 		name, err := decodeName(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1899,9 +1945,9 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		go m.doRun(name, "manual")
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/stop", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stop", func(w http.ResponseWriter, r *http.Request) {
 		name, err := decodeName(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1909,9 +1955,9 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		go m.doStop(name)
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/restart", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/restart", func(w http.ResponseWriter, r *http.Request) {
 		name, err := decodeName(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1922,9 +1968,9 @@ func (m *Manager) routes() *http.ServeMux {
 			m.doRun(name, "manual")
 		}()
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/exec", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/exec", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name         string `json:"name"`
 			Command      string `json:"command"`
@@ -1939,9 +1985,9 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		writeJSON(w, m.sshExec(body.Name, body.Command, body.SudoPassword))
-	}))
+	})
 
-	mux.HandleFunc("/api/info", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		if name == "" {
 			http.Error(w, "name required", http.StatusBadRequest)
@@ -1963,9 +2009,9 @@ func (m *Manager) routes() *http.ServeMux {
 		m.mu.Unlock()
 		m.broadcast()
 		writeJSON(w, res)
-	}))
+	})
 
-	mux.HandleFunc("/api/history", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/history", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		// Return newest-first; copy so we don't hand out internal pointers.
 		events := make([]RunEvent, 0, len(m.history))
@@ -1975,10 +2021,10 @@ func (m *Manager) routes() *http.ServeMux {
 		days := m.cfg.HistoryDays
 		m.mu.Unlock()
 		writeJSON(w, map[string]any{"events": events, "retentionDays": days})
-	}))
+	})
 
 	// ----- VM management -----
-	mux.HandleFunc("/api/vm/create", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/create", func(w http.ResponseWriter, r *http.Request) {
 		var req createReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2006,9 +2052,9 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		go m.createVMs(req)
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/vm/set", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/set", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
 			Name         string `json:"name"`
 			CPU          int    `json:"cpu"`
@@ -2043,9 +2089,9 @@ func (m *Manager) routes() *http.ServeMux {
 			res["error"] = err.Error() + ": " + string(out)
 		}
 		writeJSON(w, res)
-	}))
+	})
 
-	mux.HandleFunc("/api/vm/rename", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/rename", func(w http.ResponseWriter, r *http.Request) {
 		var b struct{ Name, NewName string }
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2067,9 +2113,9 @@ func (m *Manager) routes() *http.ServeMux {
 			res["error"] = err.Error() + ": " + string(out)
 		}
 		writeJSON(w, res)
-	}))
+	})
 
-	mux.HandleFunc("/api/vm/delete", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/delete", func(w http.ResponseWriter, r *http.Request) {
 		name, err := decodeName(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2087,9 +2133,9 @@ func (m *Manager) routes() *http.ServeMux {
 			res["error"] = derr.Error() + ": " + string(out)
 		}
 		writeJSON(w, res)
-	}))
+	})
 
-	mux.HandleFunc("/api/vm/get", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/get", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		if name == "" {
 			http.Error(w, "name required", http.StatusBadRequest)
@@ -2102,12 +2148,13 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(out)) // pass tart's JSON straight through
-	}))
+	})
 
-	mux.HandleFunc("/api/vm/notes", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/vm/notes", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
-			Name  string `json:"name"`
-			Notes string `json:"notes"`
+			Name  string   `json:"name"`
+			Notes string   `json:"notes"`
+			Tags  []string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2117,6 +2164,13 @@ func (m *Manager) routes() *http.ServeMux {
 			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
+		// Filter empty tags
+		var tags []string
+		for _, t := range b.Tags {
+			if t = strings.TrimSpace(t); t != "" {
+				tags = append(tags, t)
+			}
+		}
 		m.mu.Lock()
 		vm := m.vms[b.Name]
 		if vm == nil {
@@ -2125,29 +2179,30 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		vm.Notes = b.Notes
+		vm.Tags = tags
 		m.save()
 		m.mu.Unlock()
 		m.broadcast()
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
 	// Install or update tart (downloads the latest release either way).
-	mux.HandleFunc("/api/install-tart", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/install-tart", func(w http.ResponseWriter, r *http.Request) {
 		go m.installTart()
 		writeJSON(w, map[string]bool{"ok": true})
-	}))
+	})
 
-	mux.HandleFunc("/api/server/restart", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/server/restart", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"ok": true})
 		go m.restartServer()
-	}))
-	mux.HandleFunc("/api/server/stop", m.protect(func(w http.ResponseWriter, r *http.Request) {
+	})
+	mux.HandleFunc("/api/server/stop", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"ok": true})
 		go m.stopServer()
-	}))
+	})
 
-	mux.HandleFunc("/api/config", m.protect(m.handleConfig))
-	mux.HandleFunc("/events", m.protect(m.handleEvents))
+	mux.HandleFunc("/api/config", m.handleConfig)
+	mux.HandleFunc("/events", m.handleEvents)
 
 	return mux
 }
@@ -2341,6 +2396,9 @@ func main() {
 	if *listenFlag != "" {
 		m.cfg.Listen = *listenFlag
 	}
+
+	// Set up file logging (after config is loaded so we have LogPath).
+	setupLogging(m.cfg.LogPath)
 
 	// Reconcile reality at startup: detect JSON support, check storage, sync.
 	m.detectTartJSON()

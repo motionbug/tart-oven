@@ -129,6 +129,7 @@
   td.name b { font-weight: 600; }
   td.acts { white-space: nowrap; width: 1%; }
   td.info { width: 260px; max-width: 260px; }
+  td.notes { max-width: 150px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .infobox { font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.35; white-space: pre-wrap; max-height: 66px; overflow: auto; color: var(--muted); }
   .state { font-weight: 600; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
   .state .dot { width: 9px; height: 9px; }
@@ -139,6 +140,7 @@
   @keyframes pulse { 50% { opacity: .35; } }
   .tag { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); margin-left: 6px; }
   .tag.warn { color: var(--amber); border-color: rgba(255,183,77,.55); background: rgba(255,183,77,.10); }
+  .tag.user-tag { color: var(--accent); border-color: rgba(79,140,255,.5); background: rgba(79,140,255,.08); }
   .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
   .tags .tag { margin-left: 0; white-space: nowrap; }
   .pill { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
@@ -156,6 +158,7 @@
   .ssh-dot.green { background: var(--green); }
   .ssh-dot.red { background: var(--red); }
   .ssh-dot.amber { background: var(--amber); animation: pulse 1s infinite; }
+  .ssh-dot.grey { background: var(--grey); }
 
   .ssh-row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
   .ssh-row select { width: 280px; flex: none; }
@@ -199,11 +202,6 @@
   .badge.error { color: var(--red); border-color: rgba(255,92,92,.5); }
   .task pre { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; max-height: 180px; overflow: auto; white-space: pre-wrap; color: var(--text); }
 
-  /* Notes column */
-  .notes-cell { display: flex; align-items: center; gap: 6px; max-width: 180px; }
-  .notes-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-  .icon-btn { background: none; border: none; padding: 4px; cursor: pointer; color: var(--muted); border-radius: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .icon-btn:hover { color: var(--text); background: var(--panel2); }
 
   /* Modal */
   .modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
@@ -235,9 +233,9 @@
 
   <div class="tabs">
     <button class="tabbtn active" data-tab="dashboard">Dashboard</button>
-    <button class="tabbtn" data-tab="history">History</button>
     <button class="tabbtn" data-tab="vmm">VM Management</button>
     <button class="tabbtn" data-tab="config">Configuration</button>
+    <button class="tabbtn" data-tab="logs">Logs</button>
     <button class="tabbtn" data-tab="guide">Helper Guide</button>
   </div>
 
@@ -245,15 +243,20 @@
   <div id="tab-dashboard" class="tab active">
     <div class="scheduler-row">
       <button id="pauseBtn" class="big">…</button>
-      <button id="refreshBtn" class="ghost" title="Re-check all VMs against Tart and clear stuck statuses">⟳ Refresh VM status</button>
-      <span id="schedStatus" class="muted"></span>
+      <button id="refreshBtn" class="ghost" title="Re-check all VMs against Tart and clear stuck statuses">⟳ Refresh</button>
     </div>
 
     <div class="panel">
-      <h2>Currently running</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">Available VMs</h2>
+        <div style="display:flex;align-items:center;gap:16px">
+          <input type="text" id="vmSearch" placeholder="Search VMs…" style="width:200px" autocomplete="off">
+          <label class="radio"><span class="toggle"><input type="checkbox" id="showRunningOnly"><span class="slider"></span></span> Show running only</label>
+        </div>
+      </div>
       <table>
-        <thead><tr><th>Name</th><th>IP</th><th>SSH</th><th>Info</th><th>Time remaining</th><th>Actions</th></tr></thead>
-        <tbody id="runningRows"><tr><td colspan="6" class="muted">none running</td></tr></tbody>
+        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Notes</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
+        <tbody id="vmrows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
       </table>
     </div>
 
@@ -268,20 +271,19 @@
       <div id="console"></div>
     </div>
 
-    <div class="panel">
-      <h2>Available VMs</h2>
-      <table>
-        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Notes</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
-        <tbody id="vmrows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
-      </table>
-    </div>
-
-    <!-- Notes edit modal -->
+    <!-- VM details edit modal (notes + tags) -->
     <div id="notesModal" class="modal hidden">
       <div class="modal-backdrop"></div>
       <div class="modal-content">
-        <h3>Notes for <span id="notesVmName"></span></h3>
-        <textarea id="notesText" rows="6" placeholder="Enter notes for this VM…"></textarea>
+        <h3>Edit <span id="notesVmName"></span></h3>
+        <div class="field" style="margin-bottom:12px">
+          <label>Tags (comma-separated)</label>
+          <input type="text" id="tagsInput" placeholder="e.g. demo, production, test">
+        </div>
+        <div class="field">
+          <label>Notes</label>
+          <textarea id="notesText" rows="4" placeholder="Enter notes for this VM…"></textarea>
+        </div>
         <div class="modal-actions">
           <button id="notesSave">Save</button>
           <button id="notesCancel" class="ghost">Cancel</button>
@@ -289,29 +291,9 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Tart logs</h2>
-      <pre id="tartLogs" class="logbox"></pre>
-    </div>
   </div>
 
-  <!-- ================= TAB 2: HISTORY ================= -->
-  <div id="tab-history" class="tab">
-    <div class="panel">
-      <h2>Run history</h2>
-      <div class="searchbar">
-        <input type="text" id="histSearch" placeholder="🔎 Search by VM name…" autocomplete="off">
-        <button class="ghost" id="histRefresh">Refresh</button>
-        <span id="histMeta" class="muted" style="margin-left:8px"></span>
-      </div>
-      <table>
-        <thead><tr><th>Started</th><th>Name</th><th>Duration</th><th>IP</th><th>Trigger</th></tr></thead>
-        <tbody id="histRows"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ================= TAB 3: VM MANAGEMENT ================= -->
+  <!-- ================= TAB 2: VM MANAGEMENT ================= -->
   <div id="tab-vmm" class="tab">
 
     <div class="panel">
@@ -349,6 +331,7 @@
         <div class="field"><label>Memory (MB)</label><input type="number" id="editMemory" min="512" step="512"></div>
         <div class="field"><label>Disk size (GB) — grow only</label><input type="number" id="editDisk" min="0" placeholder="blank = unchanged"></div>
         <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
+        <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
       </div>
       <div class="checks">
         <label><input type="checkbox" id="editRandMac"> New random MAC</label>
@@ -358,26 +341,17 @@
     </div>
 
     <div class="panel">
-      <h2>Rename / delete</h2>
+      <h2>Delete a VM</h2>
       <div class="grid">
-        <div class="field"><label>Rename — VM</label><select id="renameSelect"></select></div>
-        <div class="field"><label>New name</label><input type="text" id="renameNew" placeholder="new-vm-name"></div>
-        <div class="field"><label>&nbsp;</label><button id="renameBtn">Rename</button></div>
-      </div>
-      <div class="grid" style="margin-top:12px">
-        <div class="field"><label>Delete — VM</label><select id="deleteSelect"></select></div>
+        <div class="field"><label>VM to delete</label><select id="deleteSelect"></select></div>
         <div class="field"><label>&nbsp;</label><button id="deleteBtn" class="danger">Delete permanently</button></div>
       </div>
-      <p class="muted" style="margin:10px 0 0">VMs must be stopped before renaming or deleting. Delete cannot be undone.</p>
+      <p class="muted" style="margin:10px 0 0">VM must be stopped. Delete cannot be undone.</p>
     </div>
 
-    <div class="panel">
-      <h2>Activity</h2>
-      <div id="tasks"><div class="muted">No recent create/clone operations.</div></div>
-    </div>
   </div>
 
-  <!-- ================= TAB 4: CONFIGURATION ================= -->
+  <!-- ================= TAB 3: CONFIGURATION ================= -->
   <div id="tab-config" class="tab">
     <div class="panel">
       <h2>VM Scheduler</h2>
@@ -426,7 +400,6 @@
       <h2>Server Settings</h2>
       <div class="grid">
         <div class="field"><label>Listen (host:port — restart to apply)</label><input type="text" id="listen"></div>
-        <div class="field"><label>Bearer token (optional auth)</label><input type="password" id="bearerToken" placeholder="empty = no auth"></div>
         <div class="field"><label>History retention (days)</label><input type="number" id="historyDays" min="1"></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="lightMode"><span class="slider"></span></span> Light mode</label></div>
       </div>
@@ -465,6 +438,32 @@
     </div>
   </div>
 
+  <!-- ================= TAB 4: LOGS ================= -->
+  <div id="tab-logs" class="tab">
+    <div class="panel">
+      <h2>Tart logs</h2>
+      <pre id="tartLogs" class="logbox"></pre>
+    </div>
+
+    <div class="panel">
+      <h2>Activity</h2>
+      <div id="tasks" style="max-height:200px;overflow:auto"><div class="muted">No recent create/clone operations.</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Run history</h2>
+      <div class="searchbar">
+        <input type="text" id="histSearch" placeholder="🔎 Search by VM name…" autocomplete="off">
+        <button class="ghost" id="histRefresh">Refresh</button>
+        <span id="histMeta" class="muted" style="margin-left:8px"></span>
+      </div>
+      <table>
+        <thead><tr><th>Started</th><th>Name</th><th>Duration</th><th>IP</th><th>Trigger</th></tr></thead>
+        <tbody id="histRows"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ================= TAB 5: HELPER GUIDE ================= -->
   <div id="tab-guide" class="tab">
     <div class="panel">
@@ -488,32 +487,19 @@ function getTheme() {
 }
 if (getTheme() === "light") document.documentElement.setAttribute("data-theme", "light");
 
-let token = "";          // auth token, in-memory only
 let clockSkew = 0;       // serverNow - clientNow (ms)
 let latest = null;       // last state snapshot
 let activeTab = "dashboard";
 let histTimer = null;
 
-function authHeaders(extra) {
-  const h = extra || {};
-  if (token) h["Authorization"] = "Bearer " + token;
-  return h;
-}
 async function api(path, opts) {
   opts = opts || {};
-  opts.headers = authHeaders(opts.headers);
-  const res = await fetch(path, opts);
-  if (res.status === 401) {
-    const t = prompt("Bearer token required:");
-    if (t) { token = t; return api(path, opts); }
-    throw new Error("unauthorized");
-  }
-  return res;
+  return fetch(path, opts);
 }
 
 // ---- SSE ----
 function connect() {
-  const url = "/events" + (token ? ("?token=" + encodeURIComponent(token)) : "");
+  const url = "/events";
   const es = new EventSource(url);
   es.onmessage = (e) => { render(JSON.parse(e.data)); };
   es.onerror = () => {
@@ -528,7 +514,7 @@ function showTab(id) {
   activeTab = id;
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + id));
   document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
-  if (id === "history") loadHistory();
+  if (id === "logs") loadHistory();
   if (id === "guide") loadReadme();
 }
 document.querySelectorAll(".tabbtn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -555,7 +541,6 @@ function fillConfig(c) {
   set("shutdownCommand", c.shutdownCommand);
   set("shutdownWaitSec", c.shutdownWaitSec);
   set("listen", c.listen);
-  set("bearerToken", c.bearerToken || "");
   set("runArgs", c.runArgs || "");
   set("bootTimeoutSec", c.bootTimeoutSec || 60);
   set("netPriority", c.netPriority || "auto");
@@ -578,13 +563,11 @@ function readConfig() {
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
-    shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
-    bearerToken: document.getElementById("bearerToken").value
+    shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec")
   };
 }
 async function saveConfig(extra) {
   const cfg = Object.assign(readConfig(), extra || {});
-  if (cfg.bearerToken) token = cfg.bearerToken;
   const s = document.getElementById("cfgStatus");
   try {
     const res = await api("/api/config", {
@@ -640,17 +623,21 @@ function fmtDuration(startISO, stopISO) {
 }
 function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
 
-// SSH connectivity bubble for a VM. Shows the last known status even after the
-// VM has stopped (retained for reference).
+// SSH connectivity bubble for a VM.
 function sshCell(vm) {
-  const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
-  if (checked) {
-    return vm.sshOk
-      ? '<span class="ssh-dot green" title="SSH OK"></span>'
-      : '<span class="ssh-dot red" title="SSH failed — see SSH setup guide in Configuration"></span>';
+  if (vm.state === "stopped") {
+    return '<span class="ssh-dot grey" title="VM stopped"></span>';
   }
-  if (vm.state === "running") return '<span class="ssh-dot amber" title="checking SSH…"></span>';
-  return '<span class="muted">—</span>';
+  if (vm.state === "running") {
+    const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
+    if (checked) {
+      return vm.sshOk
+        ? '<span class="ssh-dot green" title="SSH OK"></span>'
+        : '<span class="ssh-dot red" title="SSH failed — see SSH setup guide in Configuration"></span>';
+    }
+    return '<span class="ssh-dot amber" title="checking SSH…"></span>';
+  }
+  return '<span class="ssh-dot amber" title="' + vm.state + '…"></span>';
 }
 
 // Info column: last "Get info" output (may be multi-line).
@@ -659,15 +646,10 @@ function infoCell(vm) {
   return '<div class="infobox" title="fetched ' + esc(fmtDateTime(vm.infoAt)) + '">' + esc(vm.info) + '</div>';
 }
 
-// Notes column: user-entered notes with pencil edit button.
-function notesCell(vm) {
-  const preview = vm.notes ? esc(vm.notes.length > 40 ? vm.notes.slice(0, 40) + '…' : vm.notes) : '';
-  const title = vm.notes ? esc(vm.notes) : 'No notes';
-  return '<div class="notes-cell" title="' + title + '">' +
-    '<span class="notes-preview">' + (preview || '<span class="muted">—</span>') + '</span>' +
-    '<button class="icon-btn edit-notes" data-vm="' + esc(vm.name) + '" title="Edit notes">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
-    '</button></div>';
+// Tags displayed as chips (user-defined tags in accent color).
+function tagsHtml(vm) {
+  if (!vm.tags || !vm.tags.length) return '';
+  return vm.tags.map(t => '<span class="tag user-tag">' + esc(t) + '</span>').join('');
 }
 
 // ---- toasts ----
@@ -735,25 +717,14 @@ function render(state) {
   }
 
   const pb = document.getElementById("pauseBtn");
-  const ss = document.getElementById("schedStatus");
   if (state.config.paused) {
-    pb.textContent = "▶ Turn scheduler ON"; pb.className = "big pause";
-    ss.textContent = "Scheduler is OFF — no automatic runs.";
+    pb.textContent = "⏸ Scheduler OFF"; pb.className = "big pause";
   } else {
-    pb.textContent = "⏸ Turn scheduler OFF"; pb.className = "big resume";
-    let s = "Scheduler is ON — every " + state.config.intervalMinutes + " min, window " +
-      state.config.windowMinutes + " min, up to " + state.config.maxConcurrent + " at once" +
-      " (" + (state.config.schedulerMode === "sequential" ? "sequential" : "random") + ").";
-    if (state.config.dailyEnabled) {
-      s += " Active " + state.config.dailyStart + "–" + state.config.dailyStop + ".";
-      if (!state.withinHours) s += " ⏰ Outside active hours — VMs are stopped.";
-    }
-    ss.textContent = s;
+    pb.textContent = "▶ Scheduler ON"; pb.className = "big resume";
   }
 
   if (!configLoaded) fillConfig(state.config);
 
-  renderRunning(state.vms);
   renderTable(state.vms);
   fillSshTargets(state.vms);
   fillMgmtSelects(state.vms);
@@ -762,66 +733,61 @@ function render(state) {
   renderLogs(state.logs || []);
   checkErrors(state.vms);
 
-  if (activeTab === "history") scheduleHistory();
-}
-
-function renderRunning(vms) {
-  const rows = vms.filter(v => v.state === "running" || v.state === "starting" || v.state === "stopping");
-  const tb = document.getElementById("runningRows");
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">none running</td></tr>'; return; }
-  tb.innerHTML = rows.map(vm => {
-    const n = esc(vm.name);
-    const ip = vm.ip ? '<span class="ip">' + esc(vm.ip) + '</span>' : '<span class="muted">—</span>';
-    const rem = vm.state !== "running"
-      ? '<span class="muted">' + vm.state + '…</span>'
-      : (latest.config.paused ? "—" : fmtRemaining(vm.stopAt));
-    const noIP = vm.ip ? "" : " disabled";
-    const busy = vm.busy ? " disabled" : "";
-    return '<tr>' +
-      '<td class="name"><b>' + n + '</b></td>' +
-      '<td>' + ip + '</td>' +
-      '<td>' + sshCell(vm) + '</td>' +
-      '<td class="info">' + infoCell(vm) + '</td>' +
-      '<td class="mono" data-stop="' + (vm.stopAt || "") + '" data-state="' + vm.state + '">' + (typeof rem === "string" ? rem : "") + '</td>' +
-      '<td class="acts"><div class="row-actions">' +
-        '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + busy + '>Stop</button>' +
-        '<button class="ghost" onclick="act(\'restart\',\'' + n + '\')"' + busy + '>Restart</button>' +
-        '<button class="ghost" onclick="getInfo(\'' + n + '\')">Get info</button>' +
-        '<button class="vnc" title="Open Screen Sharing from THIS computer" onclick="openVNC(\'' + esc(vm.ip) + '\')"' + noIP + '>Screen</button>' +
-      '</div></td></tr>';
-  }).join("");
+  if (activeTab === "logs") scheduleHistory();
 }
 
 function renderTable(vms) {
   const tbody = document.getElementById("vmrows");
-  if (!vms.length) { tbody.innerHTML = '<tr><td colspan="9" class="muted">No VMs found at this storage path.</td></tr>'; return; }
-  tbody.innerHTML = vms.map(vm => {
+  const runningOnly = document.getElementById("showRunningOnly").checked;
+  const query = (document.getElementById("vmSearch").value || "").toLowerCase().trim();
+  let filtered = vms;
+  if (runningOnly) {
+    filtered = filtered.filter(v => v.state === "running" || v.state === "starting" || v.state === "stopping");
+  }
+  if (query) {
+    filtered = filtered.filter(v =>
+      v.name.toLowerCase().includes(query) ||
+      (v.tags && v.tags.some(t => t.toLowerCase().includes(query))) ||
+      (v.notes && v.notes.toLowerCase().includes(query)) ||
+      (v.info && v.info.toLowerCase().includes(query)) ||
+      (v.ip && v.ip.includes(query))
+    );
+  }
+  if (!filtered.length) {
+    const msg = query ? "No VMs match your search." : (runningOnly ? "No running VMs." : "No VMs found at this storage path.");
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">' + msg + '</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(vm => {
     const tagList = [];
     if (vm.template) tagList.push('<span class="tag">TEMPLATE</span>');
     if (vm.excluded) tagList.push('<span class="tag">excluded</span>');
     if (vm.bootFailed) tagList.push('<span class="tag warn">boot failure</span>');
-    const tags = tagList.length ? '<div class="tags">' + tagList.join("") + '</div>' : "";
+    const userTags = tagsHtml(vm);
+    const allTags = tagList.join("") + userTags;
+    const tags = allTags ? '<div class="tags">' + allTags + '</div>' : "";
     const busy = vm.busy ? " disabled" : "";
     const rem = (vm.state === "running" && !latest.config.paused) ? fmtRemaining(vm.stopAt) : "—";
     const ip = vm.ip ? '<span class="ip">' + esc(vm.ip) + '</span>' : '<span class="muted">—</span>';
     const n = esc(vm.name);
-    // Screen Sharing only makes sense for a running VM (IP is retained after stop).
+    const notRunning = vm.state !== "running" ? " disabled" : "";
     const noScreen = (vm.state === "running" && vm.ip) ? "" : " disabled";
+    const notesPreview = vm.notes ? esc(vm.notes.length > 30 ? vm.notes.slice(0, 30) + '…' : vm.notes) : '<span class="muted">—</span>';
     return '<tr>' +
       '<td class="name"><b>' + n + '</b>' + tags + '</td>' +
       '<td><span class="state s-' + vm.state + '"><span class="dot"></span>' + vm.state + '</span></td>' +
       '<td>' + ip + '</td>' +
       '<td>' + sshCell(vm) + '</td>' +
       '<td class="info">' + infoCell(vm) + '</td>' +
-      '<td class="notes">' + notesCell(vm) + '</td>' +
+      '<td class="notes" title="' + esc(vm.notes || '') + '">' + notesPreview + '</td>' +
       '<td class="muted" title="' + esc(fmtDateTime(vm.lastRun)) + '">' + fmtAgo(vm.lastRun) + '</td>' +
       '<td class="mono" data-stop="' + (vm.stopAt || "") + '" data-state="' + vm.state + '">' + rem + '</td>' +
       '<td class="acts"><div class="row-actions">' +
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + busy + '>Stop</button>' +
-        '<button class="ghost" onclick="act(\'restart\',\'' + n + '\')"' + busy + '>Restart</button>' +
-        '<button class="ghost" onclick="getInfo(\'' + n + '\')">Get info</button>' +
-        '<button class="vnc" title="Open Screen Sharing from THIS computer" onclick="openVNC(\'' + esc(vm.ip) + '\')"' + noScreen + '>Screen</button>' +
+        '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
+        '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\')"' + noScreen + '>Screen</button>' +
+        '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
       '</div></td></tr>';
   }).join("");
 }
@@ -849,42 +815,43 @@ document.getElementById("sshRun").onclick = sendCmd;
 document.getElementById("sshCommand").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 document.getElementById("sshSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 
-// ---- Notes modal ----
-let notesVmName = "";
-function openNotesModal(vmName) {
-  notesVmName = vmName;
+// ---- VM edit modal (notes + tags) ----
+let editVmName = "";
+function openEditModal(vmName) {
+  editVmName = vmName;
   const vm = latest && latest.vms.find(v => v.name === vmName);
   document.getElementById("notesVmName").textContent = vmName;
   document.getElementById("notesText").value = vm ? (vm.notes || "") : "";
+  document.getElementById("tagsInput").value = vm && vm.tags ? vm.tags.join(", ") : "";
   document.getElementById("notesModal").classList.remove("hidden");
-  document.getElementById("notesText").focus();
+  document.getElementById("tagsInput").focus();
 }
-function closeNotesModal() {
+function closeEditModal() {
   document.getElementById("notesModal").classList.add("hidden");
-  notesVmName = "";
+  editVmName = "";
 }
-async function saveNotes() {
+async function saveVmDetails() {
   const notes = document.getElementById("notesText").value;
+  const tagsRaw = document.getElementById("tagsInput").value;
+  const tags = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
   try {
     await api("/api/vm/notes", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: notesVmName, notes })
+      body: JSON.stringify({ name: editVmName, notes, tags })
     });
-    closeNotesModal();
+    closeEditModal();
   } catch (e) {
-    toast("Notes error", e.message, "bad");
+    toast("Save error", e.message, "bad");
   }
 }
-document.getElementById("notesSave").onclick = saveNotes;
-document.getElementById("notesCancel").onclick = closeNotesModal;
-document.querySelector("#notesModal .modal-backdrop").onclick = closeNotesModal;
+document.getElementById("notesSave").onclick = saveVmDetails;
+document.getElementById("notesCancel").onclick = closeEditModal;
+document.querySelector("#notesModal .modal-backdrop").onclick = closeEditModal;
 document.getElementById("notesText").addEventListener("keydown", e => {
-  if (e.key === "Escape") closeNotesModal();
+  if (e.key === "Escape") closeEditModal();
 });
-// Event delegation for pencil buttons
-document.getElementById("vmrows").addEventListener("click", e => {
-  const btn = e.target.closest(".edit-notes");
-  if (btn) openNotesModal(btn.dataset.vm);
+document.getElementById("tagsInput").addEventListener("keydown", e => {
+  if (e.key === "Escape") closeEditModal();
 });
 
 async function sendCmd() {
@@ -1007,7 +974,6 @@ function fillOne(id, vms, opts) {
 function fillMgmtSelects(vms) {
   fillOne("cloneSource", vms, { preferTemplate: true });
   fillOne("editSelect", vms);
-  fillOne("renameSelect", vms);
   fillOne("deleteSelect", vms);
 }
 
@@ -1058,6 +1024,7 @@ async function loadVMInfo() {
     document.getElementById("editMemory").value = d.Memory || "";
     document.getElementById("editDisplay").value = d.Display || "";
     document.getElementById("editDisk").value = "";
+    document.getElementById("renameNew").value = "";
     document.getElementById("editRandMac").checked = false;
     document.getElementById("editRandSerial").checked = false;
     info.textContent = "current: " + (d.OS || "?") + " · " + d.CPU + " CPU · " + d.Memory + " MB · disk " + d.Disk + " GB · " + (d.State || "?");
@@ -1066,32 +1033,38 @@ async function loadVMInfo() {
 
 document.getElementById("editBtn").onclick = async () => {
   const num = id => parseInt(document.getElementById(id).value, 10) || 0;
+  const name = document.getElementById("editSelect").value;
+  const newName = document.getElementById("renameNew").value.trim();
+  if (!name) return;
+
+  // Rename first if requested
+  if (newName && newName !== name) {
+    try {
+      const res = await api("/api/vm/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, newName }) });
+      const d = await res.json();
+      if (d.error) { toast("Rename failed", d.error, "bad"); return; }
+      toast("Rename", name + " → " + newName, "");
+      document.getElementById("renameNew").value = "";
+    } catch (e) { toast("Rename failed", e.message, "bad"); return; }
+  }
+
   const body = {
-    name: document.getElementById("editSelect").value,
+    name: newName || name,
     cpu: num("editCpu"), memory: num("editMemory"), diskSize: num("editDisk"),
     display: document.getElementById("editDisplay").value.trim(),
     randomMac: document.getElementById("editRandMac").checked,
     randomSerial: document.getElementById("editRandSerial").checked
   };
-  if (!body.name) return;
-  try {
-    const res = await api("/api/vm/set", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const d = await res.json();
-    if (d.error) toast("Edit failed", d.error, "bad");
-    else { toast("Edit", body.name + " updated.", ""); loadVMInfo(); }
-  } catch (e) { toast("Edit failed", e.message, "bad"); }
-};
-
-document.getElementById("renameBtn").onclick = async () => {
-  const name = document.getElementById("renameSelect").value;
-  const newName = document.getElementById("renameNew").value.trim();
-  if (!name || !newName) { toast("Rename", "Pick a VM and enter a new name.", "bad"); return; }
-  try {
-    const res = await api("/api/vm/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, newName }) });
-    const d = await res.json();
-    if (d.error) toast("Rename failed", d.error, "bad");
-    else { toast("Rename", name + " → " + newName, ""); document.getElementById("renameNew").value = ""; }
-  } catch (e) { toast("Rename failed", e.message, "bad"); }
+  // Only call set if there are actual changes
+  if (body.cpu || body.memory || body.diskSize || body.display || body.randomMac || body.randomSerial) {
+    try {
+      const res = await api("/api/vm/set", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await res.json();
+      if (d.error) toast("Edit failed", d.error, "bad");
+      else toast("Edit", body.name + " updated.", "");
+    } catch (e) { toast("Edit failed", e.message, "bad"); }
+  }
+  loadVMInfo();
 };
 
 document.getElementById("deleteBtn").onclick = async () => {
@@ -1272,6 +1245,10 @@ function renderMarkdown(md) {
 
 updateCreateMode();
 updateSshGuide();
+
+// Re-render VM table when filter toggle or search changes
+document.getElementById("showRunningOnly").onchange = () => { if (latest) renderTable(latest.vms); };
+document.getElementById("vmSearch").addEventListener("input", () => { if (latest) renderTable(latest.vms); });
 
 connect();
 </script>
