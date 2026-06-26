@@ -269,7 +269,7 @@
       <div class="ssh-row">
         <select id="sshTarget"></select>
         <input type="text" id="sshCommand" placeholder="e.g. sw_vers; whoami" autocomplete="off">
-        <input type="password" id="sshSudoPw" placeholder="sudo password (only if needed)" autocomplete="off" style="width:220px;flex:none">
+        <input type="password" id="sshSudoPw" placeholder="sudo password (if needed)" autocomplete="off" style="width:220px;flex:none">
         <button id="sshRun">Run</button>
       </div>
       <div id="console"></div>
@@ -336,6 +336,9 @@
         <div class="field"><label>Disk size (GB) — grow only</label><input type="number" id="editDisk" min="0" placeholder="blank = unchanged"></div>
         <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
         <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
+        <div class="field"><label>Custom SSH user</label><input type="text" id="editSshUser" placeholder="blank = use default"></div>
+        <div class="field"><label>Tags</label><input type="text" id="editTags" placeholder="comma-separated tags"></div>
+        <div class="field" style="grid-column: span 2"><label>Notes</label><textarea id="editNotes" rows="2" placeholder="Notes about this VM"></textarea></div>
       </div>
       <div class="checks">
         <label><input type="checkbox" id="editRandMac"> New random MAC</label>
@@ -351,6 +354,28 @@
         <div class="field"><label>&nbsp;</label><button id="deleteBtn" class="danger">Delete permanently</button></div>
       </div>
       <p class="muted" style="margin:10px 0 0">VM must be stopped. Delete cannot be undone.</p>
+    </div>
+
+    <div class="panel guide">
+      <h2>SSH setup guide</h2>
+      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from your SSH user/key settings above.</p>
+
+      <h3>1 · Generate a key (once)</h3>
+      <div class="cmd"><code id="cmdKeygen"></code><button onclick="copyCmd('cmdKeygen', this)">Copy</button></div>
+
+      <h3>2 · Send the public key to a VM</h3>
+      <div class="ssh-row">
+        <select id="sshGuideVm" onchange="updateSshGuide()"></select>
+        <span class="muted">pick a running VM, then run:</span>
+      </div>
+      <div class="cmd"><code id="cmdCopyKey"></code><button onclick="copyCmd('cmdCopyKey', this)">Copy</button></div>
+      <p class="muted">You'll enter the VM's password once. The VM must have <b>Remote Login</b> on (System Settings → General → Sharing). This command fixes the <span class="mono">~/.ssh</span> permissions that often block <span class="mono">ssh-copy-id</span>, and skips host-key fingerprint prompts / <span class="mono">known_hosts</span> entries (so reused VM IPs never cause conflicts — the same way Tart Oven connects).</p>
+
+      <h3>3 · Point Tart Oven at the key</h3>
+      <p class="muted">Set <b>SSH identity file</b> above to <span class="mono" id="guideKeyPath">~/.ssh/tart-oven</span>, then click <b>Save configuration</b>. Test it with <b>Get info</b> on a running VM.</p>
+
+      <h3>Tip · Do it once for the whole fleet</h3>
+      <p class="muted">Add the public key to your <b>TEMPLATE</b> VM's <span class="mono">~/.ssh/authorized_keys</span> before cloning — every clone inherits it, so you never repeat steps 1–2.</p>
     </div>
 
   </div>
@@ -391,7 +416,7 @@
     <div class="panel">
       <h2>SSH &amp; Commands</h2>
       <div class="grid">
-        <div class="field"><label>SSH user</label><input type="text" id="sshUser"></div>
+        <div class="field"><label>Default SSH user</label><input type="text" id="sshUser"><small>Can be overwritten per VM</small></div>
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
@@ -420,28 +445,6 @@
     <div class="actions" style="margin-bottom: 18px;">
       <button id="saveBtn">Save configuration</button>
       <span id="cfgStatus" class="muted"></span>
-    </div>
-
-    <div class="panel guide">
-      <h2>SSH setup guide</h2>
-      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from your SSH user/key settings above.</p>
-
-      <h3>1 · Generate a key (once)</h3>
-      <div class="cmd"><code id="cmdKeygen"></code><button onclick="copyCmd('cmdKeygen', this)">Copy</button></div>
-
-      <h3>2 · Send the public key to a VM</h3>
-      <div class="ssh-row">
-        <select id="sshGuideVm" onchange="updateSshGuide()"></select>
-        <span class="muted">pick a running VM, then run:</span>
-      </div>
-      <div class="cmd"><code id="cmdCopyKey"></code><button onclick="copyCmd('cmdCopyKey', this)">Copy</button></div>
-      <p class="muted">You'll enter the VM's password once. The VM must have <b>Remote Login</b> on (System Settings → General → Sharing). This command fixes the <span class="mono">~/.ssh</span> permissions that often block <span class="mono">ssh-copy-id</span>, and skips host-key fingerprint prompts / <span class="mono">known_hosts</span> entries (so reused VM IPs never cause conflicts — the same way Tart Oven connects).</p>
-
-      <h3>3 · Point Tart Oven at the key</h3>
-      <p class="muted">Set <b>SSH identity file</b> above to <span class="mono" id="guideKeyPath">~/.ssh/tart-oven</span>, then click <b>Save configuration</b>. Test it with <b>Get info</b> on a running VM.</p>
-
-      <h3>Tip · Do it once for the whole fleet</h3>
-      <p class="muted">Add the public key to your <b>TEMPLATE</b> VM's <span class="mono">~/.ssh/authorized_keys</span> before cloning — every clone inherits it, so you never repeat steps 1–2.</p>
     </div>
   </div>
 
@@ -554,6 +557,7 @@ function fillConfig(c) {
   set("excluded", (c.excluded || []).join("\n"));
   set("serverLabel", c.serverLabel || "");
   set("logPath", c.logPath || "");
+  document.getElementById("showRunningOnly").checked = !!c.showRunningOnly;
   configLoaded = true;
 }
 function readConfig() {
@@ -1055,6 +1059,11 @@ async function loadVMInfo() {
     document.getElementById("renameNew").value = "";
     document.getElementById("editRandMac").checked = false;
     document.getElementById("editRandSerial").checked = false;
+    // Load tags, notes, and custom SSH user from latest state
+    const vm = latest && latest.vms.find(v => v.name === name);
+    document.getElementById("editTags").value = vm && vm.tags ? vm.tags.join(", ") : "";
+    document.getElementById("editNotes").value = vm && vm.notes ? vm.notes : "";
+    document.getElementById("editSshUser").value = vm && vm.sshUser ? vm.sshUser : "";
     info.textContent = "current: " + (d.OS || "?") + " · " + d.CPU + " CPU · " + d.Memory + " MB · disk " + d.Disk + " GB · " + (d.State || "?");
   } catch (e) { info.textContent = "error: " + e.message; }
 }
@@ -1076,14 +1085,15 @@ document.getElementById("editBtn").onclick = async () => {
     } catch (e) { toast("Rename failed", e.message, "bad"); return; }
   }
 
+  const finalName = newName || name;
   const body = {
-    name: newName || name,
+    name: finalName,
     cpu: num("editCpu"), memory: num("editMemory"), diskSize: num("editDisk"),
     display: document.getElementById("editDisplay").value.trim(),
     randomMac: document.getElementById("editRandMac").checked,
     randomSerial: document.getElementById("editRandSerial").checked
   };
-  // Only call set if there are actual changes
+  // Only call set if there are actual tart set changes
   if (body.cpu || body.memory || body.diskSize || body.display || body.randomMac || body.randomSerial) {
     try {
       const res = await api("/api/vm/set", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -1092,6 +1102,17 @@ document.getElementById("editBtn").onclick = async () => {
       else toast("Edit", body.name + " updated.", "", "panel-tart-logs");
     } catch (e) { toast("Edit failed", e.message, "bad"); }
   }
+  // Save tags, notes, and custom SSH user
+  const tagsRaw = document.getElementById("editTags").value;
+  const tags = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
+  const notes = document.getElementById("editNotes").value;
+  const sshUser = document.getElementById("editSshUser").value.trim();
+  try {
+    await api("/api/vm/notes", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: finalName, notes, tags, sshUser })
+    });
+  } catch (_) {}
   loadVMInfo();
 };
 
@@ -1307,7 +1328,15 @@ updateCreateMode();
 updateSshGuide();
 
 // Re-render VM table when filter toggle or search changes
-document.getElementById("showRunningOnly").onchange = () => { if (latest) renderTable(latest.vms); };
+document.getElementById("showRunningOnly").onchange = async (e) => {
+  if (latest) renderTable(latest.vms);
+  try {
+    await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...readConfig(), showRunningOnly: e.target.checked })
+    });
+  } catch (_) {}
+};
 document.getElementById("vmSearch").addEventListener("input", () => { if (latest) renderTable(latest.vms); });
 
 connect();

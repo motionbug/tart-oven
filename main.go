@@ -36,7 +36,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.26"
+const version = "1.27"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -209,6 +209,7 @@ type Config struct {
 	HistoryDays     int      `json:"historyDays"`     // run-history retention in days
 	LogPath         string   `json:"logPath"`         // path to log file (rotation at 5MB)
 	ServerLabel     string   `json:"serverLabel"`     // custom label to identify this server instance
+	ShowRunningOnly bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
 }
 
 func defaultConfig() Config {
@@ -312,6 +313,7 @@ type VM struct {
 	InfoAt       time.Time `json:"infoAt,omitempty"`       // when Info was last fetched
 	Notes        string    `json:"notes,omitempty"`        // user-entered notes for tracking/inventory
 	Tags         []string  `json:"tags,omitempty"`         // user-defined tags for grouping/filtering
+	SSHUser      string    `json:"sshUser,omitempty"`      // custom SSH user (overrides default)
 	LastError    string    `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
@@ -1364,6 +1366,9 @@ func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
 		ip = vm.IP
 	}
 	user := m.cfg.SSHUser
+	if vm != nil && vm.SSHUser != "" {
+		user = vm.SSHUser
+	}
 	key := m.cfg.SSHKey
 	timeout := m.cfg.SSHTimeoutSec
 	home := m.cfg.VMStoragePath
@@ -2213,9 +2218,10 @@ func (m *Manager) routes() *http.ServeMux {
 
 	mux.HandleFunc("/api/vm/notes", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
-			Name  string   `json:"name"`
-			Notes string   `json:"notes"`
-			Tags  []string `json:"tags"`
+			Name    string   `json:"name"`
+			Notes   string   `json:"notes"`
+			Tags    []string `json:"tags"`
+			SSHUser string   `json:"sshUser"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2241,6 +2247,7 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		vm.Notes = b.Notes
 		vm.Tags = tags
+		vm.SSHUser = strings.TrimSpace(b.SSHUser)
 		m.save()
 		m.mu.Unlock()
 		m.broadcast()
