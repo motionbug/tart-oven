@@ -142,6 +142,8 @@
   .tag { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); margin-left: 6px; }
   .tag.warn { color: var(--amber); border-color: rgba(255,183,77,.55); background: rgba(255,183,77,.10); }
   .tag.user-tag { color: var(--accent); border-color: rgba(79,140,255,.5); background: rgba(79,140,255,.08); }
+  .tag-clear { font-family: inherit; cursor: pointer; }
+  .tag-clear:hover { background: rgba(255,183,77,.22); }
   .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
   .tags .tag { margin-left: 0; white-space: nowrap; }
   .pill { font-size: 11px; padding: 1px 8px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
@@ -203,7 +205,9 @@
   .badge.running { color: var(--amber); border-color: rgba(255,183,77,.5); }
   .badge.success { color: var(--green); border-color: rgba(46,204,113,.5); }
   .badge.error { color: var(--red); border-color: rgba(255,92,92,.5); }
+  .badge.cancelled { color: var(--muted); border-color: var(--border); }
   .task pre { margin: 8px 0 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; max-height: 180px; overflow: auto; white-space: pre-wrap; color: var(--text); }
+  button.tiny { font-size: 11px; padding: 2px 8px; margin-left: auto; }
 
 
   /* Modal */
@@ -337,6 +341,7 @@
         <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
         <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
         <div class="field"><label>Custom SSH user</label><input type="text" id="editSshUser" placeholder="blank = use default"></div>
+        <div class="field"><label>Custom sudo password</label><input type="password" id="editSshPassword" autocomplete="new-password" placeholder="blank = use default / keep current"></div>
         <div class="field"><label>Tags</label><input type="text" id="editTags" placeholder="comma-separated tags"></div>
         <div class="field" style="grid-column: span 2"><label>Notes</label><textarea id="editNotes" rows="2" placeholder="Notes about this VM"></textarea></div>
       </div>
@@ -417,6 +422,7 @@
       <h2>SSH &amp; Commands</h2>
       <div class="grid">
         <div class="field"><label>Default SSH user</label><input type="text" id="sshUser"><small>Can be overwritten per VM</small></div>
+        <div class="field"><label>Default sudo password</label><input type="password" id="sshPassword" autocomplete="new-password" placeholder="•••••• (leave blank to keep current)"><small>Used for passwordless shutdown; can be overwritten per VM</small></div>
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
@@ -574,7 +580,7 @@ function readConfig() {
     dailyStart: str("dailyStart"), dailyStop: str("dailyStop"),
     excluded,
     paused: latest ? latest.config.paused : false,
-    sshUser: str("sshUser"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
+    sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
@@ -791,20 +797,21 @@ function renderTable(vms) {
     return;
   }
   tbody.innerHTML = filtered.map(vm => {
+    const n = esc(vm.name);
     const tagList = [];
     if (vm.template) tagList.push('<span class="tag">TEMPLATE</span>');
     if (vm.excluded) tagList.push('<span class="tag">excluded</span>');
-    if (vm.bootFailed) tagList.push('<span class="tag warn">boot failure</span>');
+    if (vm.bootFailed) tagList.push('<button class="tag warn tag-clear" title="Clear boot failure status" onclick="clearBootFailure(\'' + n + '\')">boot failure ✕</button>');
     const userTags = tagsHtml(vm);
     const allTags = tagList.join("") + userTags;
     const tags = allTags ? '<div class="tags">' + allTags + '</div>' : "";
     const busy = vm.busy ? " disabled" : "";
     const rem = (vm.state === "running" && !latest.config.paused) ? fmtRemaining(vm.stopAt) : "—";
     const ip = vm.ip ? '<span class="ip">' + esc(vm.ip) + '</span>' : '<span class="muted">—</span>';
-    const n = esc(vm.name);
     const notRunning = vm.state !== "running" ? " disabled" : "";
     const noScreen = (vm.state === "running" && vm.ip) ? "" : " disabled";
     const notesPreview = vm.notes ? esc(vm.notes.length > 30 ? vm.notes.slice(0, 30) + '…' : vm.notes) : '<span class="muted">—</span>';
+    const effUser = vm.sshUser || (latest.config && latest.config.sshUser) || "admin";
     return '<tr>' +
       '<td class="name"><b>' + n + '</b>' + tags + '</td>' +
       '<td><span class="state s-' + vm.state + '"><span class="dot"></span>' + vm.state + '</span></td>' +
@@ -818,7 +825,7 @@ function renderTable(vms) {
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + busy + '>Stop</button>' +
         '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
-        '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\')"' + noScreen + '>Screen</button>' +
+        '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
         '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
       '</div></td></tr>';
   }).join("");
@@ -943,12 +950,19 @@ async function act(kind, name) {
     logLine("clog", "» " + kind + " " + name);
   } catch (e) { logLine("cbad", "✗ " + kind + " " + name + ": " + e.message); }
 }
-function openVNC(ip) {
+async function clearBootFailure(name) {
+  try {
+    await api("/api/vm/clear-boot-failure", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    logLine("clog", "» cleared boot failure " + name);
+  } catch (e) { logLine("cbad", "✗ clear boot failure " + name + ": " + e.message); }
+}
+function openVNC(ip, user) {
   if (!ip) return;
+  user = user || "admin";
   const a = document.createElement("a");
-  a.href = "vnc://admin@" + ip;
+  a.href = "vnc://" + user + "@" + ip;
   document.body.appendChild(a); a.click(); a.remove();
-  logLine("clog", "↗ opening Screen Sharing to admin@" + ip + " (on this computer)");
+  logLine("clog", "↗ opening Screen Sharing to " + user + "@" + ip + " (on this computer)");
 }
 
 // ---- history ----
@@ -1064,6 +1078,7 @@ async function loadVMInfo() {
     document.getElementById("editTags").value = vm && vm.tags ? vm.tags.join(", ") : "";
     document.getElementById("editNotes").value = vm && vm.notes ? vm.notes : "";
     document.getElementById("editSshUser").value = vm && vm.sshUser ? vm.sshUser : "";
+    document.getElementById("editSshPassword").value = ""; // write-only; never echoed back by the server
     info.textContent = "current: " + (d.OS || "?") + " · " + d.CPU + " CPU · " + d.Memory + " MB · disk " + d.Disk + " GB · " + (d.State || "?");
   } catch (e) { info.textContent = "error: " + e.message; }
 }
@@ -1107,10 +1122,11 @@ document.getElementById("editBtn").onclick = async () => {
   const tags = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
   const notes = document.getElementById("editNotes").value;
   const sshUser = document.getElementById("editSshUser").value.trim();
+  const sshPassword = document.getElementById("editSshPassword").value; // blank = leave unchanged
   try {
     await api("/api/vm/notes", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: finalName, notes, tags, sshUser })
+      body: JSON.stringify({ name: finalName, notes, tags, sshUser, sshPassword })
     });
   } catch (_) {}
   loadVMInfo();
@@ -1141,13 +1157,25 @@ function renderTasks(tasks) {
   c.innerHTML = tasks.slice().reverse().map(t => {
     const out = t.output ? '<pre>' + esc(t.output) + '</pre>' : "";
     const when = fmtDateTime(t.startedAt);
+    const cancelBtn = t.status === "running"
+      ? '<button class="ghost tiny" onclick="cancelTask(\'' + esc(t.id) + '\')">✕ Cancel</button>'
+      : "";
     return '<div class="task"><div class="task-head">' +
       '<span class="badge ' + t.status + '">' + t.status + '</span>' +
       '<b>' + esc(t.kind) + '</b> → <span class="mono">' + esc(t.target) + '</span>' +
       '<span class="muted">' + esc(when) + '</span>' +
       (t.error ? '<span class="err">' + esc(t.error) + '</span>' : "") +
+      cancelBtn +
       '</div>' + out + '</div>';
   }).join("");
+}
+async function cancelTask(id) {
+  try {
+    const res = await api("/api/task/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    const d = await res.json();
+    if (d.error) toast("Cancel failed", d.error, "bad");
+    else logLine("clog", "» cancelled task " + id);
+  } catch (e) { toast("Cancel failed", e.message, "bad"); }
 }
 
 document.getElementById("installTartBtn").onclick = async (e) => {

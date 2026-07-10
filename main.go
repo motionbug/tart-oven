@@ -36,7 +36,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.27"
+const version = "1.28"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -85,6 +85,16 @@ func appBundleFromBin(binPath string) string {
 		return strings.TrimSuffix(binPath, suffix)
 	}
 	return "/Applications/tart.app"
+}
+
+// ansiEscape matches terminal CSI escape sequences (cursor moves, line erase,
+// etc.) that `tart create --from-ipsw` emits to redraw its progress bar in a
+// real terminal; captured into a task log they show up as garbled bytes, so
+// they're stripped before display.
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+	return ansiEscape.ReplaceAllString(s, "")
 }
 
 // boundedBuffer is a thread-safe writer that keeps only the last max bytes,
@@ -198,6 +208,7 @@ type Config struct {
 	DailyStart      string   `json:"dailyStart"`      // "HH:MM" — begin running VMs
 	DailyStop       string   `json:"dailyStop"`       // "HH:MM" — stop running VMs
 	SSHUser         string   `json:"sshUser"`         // guest ssh user
+	SSHPassword     string   `json:"sshPassword"`     // guest sudo password; masked on read, write-only from clients
 	SSHKey          string   `json:"sshKey"`          // optional identity file path
 	SSHTimeoutSec   int      `json:"sshTimeoutSec"`   // ssh connect timeout
 	StatusCommand   string   `json:"statusCommand"`   // command for "Get info"
@@ -229,6 +240,7 @@ func defaultConfig() Config {
 		DailyStart:      "08:30",
 		DailyStop:       "22:00",
 		SSHUser:         "admin",
+		SSHPassword:     "admin",
 		SSHKey:          "~/.ssh/tart-oven",
 		SSHTimeoutSec:   15,
 		StatusCommand:   `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
@@ -314,6 +326,7 @@ type VM struct {
 	Notes        string    `json:"notes,omitempty"`        // user-entered notes for tracking/inventory
 	Tags         []string  `json:"tags,omitempty"`         // user-defined tags for grouping/filtering
 	SSHUser      string    `json:"sshUser,omitempty"`      // custom SSH user (overrides default)
+	SSHPassword  string    `json:"sshPassword,omitempty"`  // custom SSH/sudo password; persisted, but masked before every client-facing response
 	LastError    string    `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
@@ -338,13 +351,15 @@ type Task struct {
 	ID         string    `json:"id"`
 	Kind       string    `json:"kind"`   // create | clone
 	Target     string    `json:"target"` // VM name being produced
-	Status     string    `json:"status"` // running | success | error
+	Status     string    `json:"status"` // running | success | error | cancelled
 	Output     string    `json:"output"` // tail of combined stdout/stderr
 	Error      string    `json:"error,omitempty"`
 	StartedAt  time.Time `json:"startedAt"`
 	FinishedAt time.Time `json:"finishedAt,omitempty"`
 
-	lastBcast time.Time // throttles progress broadcasts; not serialized
+	lastBcast time.Time          // throttles progress broadcasts; not serialized
+	ctx       context.Context    // bound to the in-flight command(s); cancelling it kills them
+	cancel    context.CancelFunc // cancels ctx; nil once the task has finished
 }
 
 // HostStats is a lightweight snapshot of Mac mini health, refreshed ~once a
@@ -462,6 +477,9 @@ func (m *Manager) load() {
 	}
 	if m.cfg.SSHUser == "" {
 		m.cfg.SSHUser = d.SSHUser
+	}
+	if m.cfg.SSHPassword == "" {
+		m.cfg.SSHPassword = d.SSHPassword
 	}
 	if m.cfg.SSHTimeoutSec < 1 {
 		m.cfg.SSHTimeoutSec = d.SSHTimeoutSec
@@ -889,6 +907,26 @@ func (m *Manager) reconcile() {
 	}
 }
 
+// ensureSharedDir creates the host_resources bind-mount folder if it's
+// missing. `tart run` crashes outright if the --dir target doesn't exist, so
+// this must run before any VM starts (called once at startup).
+func (m *Manager) ensureSharedDir() {
+	m.mu.Lock()
+	dir := m.cfg.SharedDir
+	m.mu.Unlock()
+	if dir == "" {
+		return
+	}
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("shared dir %q missing and could not be created: %v", dir, err)
+		return
+	}
+	log.Printf("created missing shared dir %q", dir)
+}
+
 // checkStorage updates the mounted flag and broadcasts on change.
 func (m *Manager) checkStorage() {
 	m.mu.Lock()
@@ -1117,6 +1155,10 @@ func (m *Manager) doStop(name string) {
 	shutdownWait := time.Duration(m.cfg.ShutdownWaitSec) * time.Second
 	ip := vm.IP
 	sshOK := vm.SSHOK
+	sudoPassword := vm.SSHPassword
+	if sudoPassword == "" {
+		sudoPassword = m.cfg.SSHPassword
+	}
 	m.mu.Unlock()
 	m.broadcast()
 
@@ -1125,9 +1167,12 @@ func (m *Manager) doStop(name string) {
 	// 1) Preferred: clean macOS shutdown over SSH, when SSH is known to work.
 	//    The connection usually drops as the guest powers off, so we ignore the
 	//    command result and poll for the VM to actually stop, up to shutdownWait.
+	//    The configured sudo password (per-VM override, else the default) is
+	//    fed to `sudo -S` so `sudo shutdown -h now` never needs an interactive
+	//    prompt regardless of what the guest's admin password actually is.
 	if ip != "" && sshOK && strings.TrimSpace(shutdownCmd) != "" {
 		m.logln("$ ssh %s %q", name, shutdownCmd)
-		res := m.sshExec(name, shutdownCmd, "")
+		res := m.sshExec(name, shutdownCmd, sudoPassword)
 		// Distinguish "couldn't even connect/run" from "ran, connection dropped".
 		connectFail := strings.Contains(res.Stderr, "Permission denied") ||
 			strings.Contains(res.Stderr, "Connection refused") ||
@@ -1356,8 +1401,11 @@ func sshOutcome(res execResult) (bool, string) {
 }
 
 // sshExec runs command on the guest over SSH. If sudoPassword is non-empty it
-// is fed to `sudo -S` on the VM (in-memory only — never stored or logged) so
-// commands that need sudo work without a TTY.
+// is fed to `sudo -S` on the VM so commands that need sudo work without a TTY;
+// the password itself is never logged, but callers differ in where it comes
+// from: the ad-hoc Send Command panel passes a per-request value that is
+// never persisted, while doStop passes the persisted per-VM/default
+// Config.SSHPassword so a clean shutdown never needs an interactive prompt.
 func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
 	m.mu.Lock()
 	vm := m.vms[name]
@@ -1464,14 +1512,18 @@ func prefixIfNotEmpty(prefix, s string) string {
 	return prefix + s
 }
 
-// newTask registers a management task and trims the list to the last 20.
+// newTask registers a management task and trims the list to the last 20. Its
+// ctx/cancel let a running create/clone be killed on demand from the UI.
 func (m *Manager) newTask(kind, target string) *Task {
+	ctx, cancel := context.WithCancel(context.Background())
 	t := &Task{
 		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
 		Kind:      kind,
 		Target:    target,
 		Status:    "running",
 		StartedAt: time.Now(),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 	m.mu.Lock()
 	m.tasks = append(m.tasks, t)
@@ -1482,9 +1534,28 @@ func (m *Manager) newTask(kind, target string) *Task {
 	return t
 }
 
+// cancelTask finds a running task by ID and cancels its in-flight command.
+// The command's own exit path (runInto/cmdInto returning a context error)
+// marks the task cancelled/finished — this just triggers that.
+func (m *Manager) cancelTask(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.tasks {
+		if t.ID == id {
+			if t.Status != "running" || t.cancel == nil {
+				return false
+			}
+			t.cancel()
+			return true
+		}
+	}
+	return false
+}
+
 // appendTaskOutput appends to a task's output (capped) and broadcasts at most
 // once per second so a chatty download doesn't flood SSE subscribers.
 func (m *Manager) appendTaskOutput(t *Task, s string) {
+	s = stripANSI(s)
 	m.mu.Lock()
 	t.Output += s
 	if len(t.Output) > 8192 {
@@ -1503,11 +1574,21 @@ func (m *Manager) appendTaskOutput(t *Task, s string) {
 func (m *Manager) finishTask(t *Task, err error) {
 	m.mu.Lock()
 	t.FinishedAt = time.Now()
-	if err != nil {
+	switch {
+	case err != nil && t.ctx.Err() == context.Canceled:
+		t.Status = "cancelled"
+		t.Error = "cancelled by user"
+	case err != nil:
 		t.Status = "error"
 		t.Error = err.Error()
-	} else {
+	default:
 		t.Status = "success"
+	}
+	// Release the context's resources now that we're done with it, and clear
+	// the func so further cancelTask calls on this ID become no-ops.
+	if t.cancel != nil {
+		t.cancel()
+		t.cancel = nil
 	}
 	m.mu.Unlock()
 }
@@ -1523,11 +1604,12 @@ func (w *taskWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// runInto runs a tart command, streaming output into the task.
+// runInto runs a tart command, streaming output into the task. Bound to the
+// task's context, so cancelTask kills it (and any child process) outright.
 func (m *Manager) runInto(t *Task, args ...string) error {
 	m.appendTaskOutput(t, "$ tart "+strings.Join(args, " ")+"\n")
 	m.logln("$ tart %s", strings.Join(args, " "))
-	cmd := m.tartCmd(m.storage(), args...)
+	cmd := m.tartCmdCtx(t.ctx, m.storage(), args...)
 	w := &taskWriter{m, t}
 	cmd.Stdout = w
 	cmd.Stderr = w
@@ -1538,11 +1620,12 @@ func (m *Manager) runInto(t *Task, args ...string) error {
 	return err
 }
 
-// cmdInto runs an arbitrary command, streaming output into the task.
+// cmdInto runs an arbitrary command, streaming output into the task. Bound to
+// the task's context, so cancelTask kills it outright.
 func (m *Manager) cmdInto(t *Task, name string, args ...string) error {
 	m.appendTaskOutput(t, "$ "+name+" "+strings.Join(args, " ")+"\n")
 	m.logln("$ %s %s", name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
+	cmd := exec.CommandContext(t.ctx, name, args...)
 	w := &taskWriter{m, t}
 	cmd.Stdout = w
 	cmd.Stderr = w
@@ -1908,13 +1991,17 @@ func (m *Manager) snapshot() stateSnapshot {
 		v.Template = strings.Contains(v.Name, templateMarker)
 		v.Excluded = excluded[v.Name]
 		v.Busy = m.busy[v.Name]
+		v.SSHPassword = "" // write-only from clients; never echo the stored value
 		vms = append(vms, &v)
 	}
 	sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
 
+	cfg := m.cfg
+	cfg.SSHPassword = "" // write-only from clients; never echo the stored value
+
 	return stateSnapshot{
 		VMs:            vms,
-		Config:         m.cfg,
+		Config:         cfg,
 		StorageMounted: m.storageMounted,
 		StoragePath:    m.cfg.VMStoragePath,
 		WithinHours:    !m.cfg.DailyEnabled || inDailyWindow(time.Now(), m.cfg.DailyStart, m.cfg.DailyStop),
@@ -2120,6 +2207,27 @@ func (m *Manager) routes() *http.ServeMux {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
+	// Cancels a running Activity task (create/clone/install) by killing its
+	// in-flight command. No-op if the task already finished or doesn't exist.
+	mux.HandleFunc("/api/task/cancel", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if b.ID == "" {
+			http.Error(w, "id required", http.StatusBadRequest)
+			return
+		}
+		if !m.cancelTask(b.ID) {
+			writeJSON(w, map[string]string{"error": "task not running or not found"})
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
 	mux.HandleFunc("/api/vm/set", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
 			Name         string `json:"name"`
@@ -2218,10 +2326,11 @@ func (m *Manager) routes() *http.ServeMux {
 
 	mux.HandleFunc("/api/vm/notes", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
-			Name    string   `json:"name"`
-			Notes   string   `json:"notes"`
-			Tags    []string `json:"tags"`
-			SSHUser string   `json:"sshUser"`
+			Name        string   `json:"name"`
+			Notes       string   `json:"notes"`
+			Tags        []string `json:"tags"`
+			SSHUser     string   `json:"sshUser"`
+			SSHPassword string   `json:"sshPassword"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2248,6 +2357,40 @@ func (m *Manager) routes() *http.ServeMux {
 		vm.Notes = b.Notes
 		vm.Tags = tags
 		vm.SSHUser = strings.TrimSpace(b.SSHUser)
+		// Write-only: the client never receives the stored password back, so a
+		// blank submission means "leave it unchanged", not "clear it".
+		if pw := strings.TrimSpace(b.SSHPassword); pw != "" {
+			vm.SSHPassword = pw
+		}
+		m.save()
+		m.mu.Unlock()
+		m.broadcast()
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
+	// Clears a VM's boot-failure flag once the underlying issue (network,
+	// storage, config) has been fixed, so it competes normally in the
+	// scheduler again instead of being deprioritized indefinitely.
+	mux.HandleFunc("/api/vm/clear-boot-failure", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if b.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		m.mu.Lock()
+		vm := m.vms[b.Name]
+		if vm == nil {
+			m.mu.Unlock()
+			writeJSON(w, map[string]string{"error": "VM not found"})
+			return
+		}
+		vm.BootFailed = false
 		m.save()
 		m.mu.Unlock()
 		m.broadcast()
@@ -2282,6 +2425,7 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		cfg := m.cfg
 		m.mu.Unlock()
+		cfg.SSHPassword = "" // write-only from clients; never echo the stored value
 		writeJSON(w, cfg)
 		return
 	}
@@ -2301,9 +2445,16 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// rebind a live listener).
 	prevListen := m.cfg.Listen
 	prevPaused := m.cfg.Paused
+	prevPassword := m.cfg.SSHPassword
 	m.cfg = in
 	if m.cfg.Listen == "" {
 		m.cfg.Listen = prevListen
+	}
+	// The password field is write-only: the client never receives the stored
+	// value back, so a blank submission means "leave it unchanged" rather
+	// than "clear it".
+	if m.cfg.SSHPassword == "" {
+		m.cfg.SSHPassword = prevPassword
 	}
 	if m.cfg.IntervalMinutes < 1 {
 		m.cfg.IntervalMinutes = 1
@@ -2325,6 +2476,9 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.cfg.SSHUser == "" {
 		m.cfg.SSHUser = "admin"
+	}
+	if m.cfg.SSHPassword == "" {
+		m.cfg.SSHPassword = "admin"
 	}
 	if m.cfg.ShutdownWaitSec < 1 {
 		m.cfg.ShutdownWaitSec = 60
@@ -2474,6 +2628,7 @@ func main() {
 	m.detectTartJSON()
 	m.updateTartVersion()
 	m.checkStorage()
+	m.ensureSharedDir()
 	m.reconcile()
 	m.updateHostStats()
 	m.hostIP = localIP()
