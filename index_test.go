@@ -21,3 +21,22 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardKeepsMdmCopyDisabledWhileInFlight(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		"let mdmCopyInFlight = false;",
+		"copyBtn.disabled = mdmCopyInFlight || !hasRunningVM;",
+		"if (mdmCopyInFlight) return;",
+		"mdmCopyInFlight = true;",
+		"mdmCopyInFlight = false;\n    updateMdmCopyButton();",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing MDM copy in-flight guard %q", want)
+		}
+	}
+}

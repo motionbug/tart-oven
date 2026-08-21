@@ -523,6 +523,7 @@ let clockSkew = 0;       // serverNow - clientNow (ms)
 let latest = null;       // last state snapshot
 let activeTab = "dashboard";
 let histTimer = null;
+let mdmCopyInFlight = false;
 
 async function api(path, opts) {
   opts = opts || {};
@@ -1052,21 +1053,25 @@ function fillMgmtSelects(vms) {
   fillOne("deleteSelect", vms);
   const running = vms.filter(v => v.state === "running");
   fillOne("mdmTarget", running);
-  const copyBtn = document.getElementById("copyMdmBtn");
   if (!running.length) {
     document.getElementById("mdmTarget").innerHTML = '<option value="">Start the base VM first</option>';
-    copyBtn.disabled = true;
-  } else {
-    copyBtn.disabled = false;
   }
+  updateMdmCopyButton(vms);
+}
+
+function updateMdmCopyButton(vms) {
+  const copyBtn = document.getElementById("copyMdmBtn");
+  const hasRunningVM = (vms || (latest && latest.vms) || []).some(v => v.state === "running");
+  copyBtn.disabled = mdmCopyInFlight || !hasRunningVM;
 }
 
 async function copyMdmProfile() {
   const name = document.getElementById("mdmTarget").value;
-  const btn = document.getElementById("copyMdmBtn");
   const status = document.getElementById("mdmCopyStatus");
+  if (mdmCopyInFlight) return;
   if (!name) { status.textContent = "Start and select a base VM first."; return; }
-  btn.disabled = true;
+  mdmCopyInFlight = true;
+  updateMdmCopyButton();
   status.textContent = "Connecting and copying profile…";
   try {
     const res = await api("/api/vm/mdm-profile", {
@@ -1079,7 +1084,8 @@ async function copyMdmProfile() {
   } catch (err) {
     status.textContent = "Copy failed — " + err.message;
   } finally {
-    btn.disabled = !(latest && latest.vms.some(v => v.state === "running"));
+    mdmCopyInFlight = false;
+    updateMdmCopyButton();
   }
 }
 document.getElementById("copyMdmBtn").onclick = copyMdmProfile;
