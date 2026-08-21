@@ -21,6 +21,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,34 +194,76 @@ func expandHome(path string) string {
 // dashboard. Durations are kept as plain minutes/seconds so the JSON and the
 // HTML form stay simple.
 type Config struct {
-	Listen          string   `json:"listen"`          // host:port to bind, e.g. 0.0.0.0:8080
-	VMStoragePath   string   `json:"vmStoragePath"`   // becomes TART_HOME on every tart call
-	SharedDir       string   `json:"sharedDir"`       // host_resources bind mount
-	TartAppPath     string   `json:"tartAppPath"`     // full path to the tart binary
-	IntervalMinutes int      `json:"intervalMinutes"` // how often the scheduler acts
-	WindowMinutes   int      `json:"windowMinutes"`   // how long each VM stays up
-	MaxConcurrent   int      `json:"maxConcurrent"`   // max VMs running at once
-	SchedulerMode   string   `json:"schedulerMode"`   // "random" | "sequential" (alphabetical)
-	Excluded        []string `json:"excluded"`        // VM names never auto-selected
-	JamfRecon       bool     `json:"jamfRecon"`       // run `jamf recon` after start/stop
-	Paused          bool     `json:"paused"`          // global scheduler pause
-	DailyEnabled    bool     `json:"dailyEnabled"`    // gate auto-runs to a daily time window
-	DailyStart      string   `json:"dailyStart"`      // "HH:MM" — begin running VMs
-	DailyStop       string   `json:"dailyStop"`       // "HH:MM" — stop running VMs
-	SSHUser         string   `json:"sshUser"`         // guest ssh user
-	SSHPassword     string   `json:"sshPassword"`     // guest sudo password; masked on read, write-only from clients
-	SSHKey          string   `json:"sshKey"`          // optional identity file path
-	SSHTimeoutSec   int      `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand   string   `json:"statusCommand"`   // command for "Get info"
-	ShutdownCommand string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
-	ShutdownWaitSec int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
-	RunArgs         string   `json:"runArgs"`         // extra args appended to every `tart run`
-	NetPriority     string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec  int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
-	HistoryDays     int      `json:"historyDays"`     // run-history retention in days
-	LogPath         string   `json:"logPath"`         // path to log file (rotation at 5MB)
-	ServerLabel     string   `json:"serverLabel"`     // custom label to identify this server instance
-	ShowRunningOnly bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
+	Listen             string   `json:"listen"`          // host:port to bind, e.g. 0.0.0.0:8080
+	VMStoragePath      string   `json:"vmStoragePath"`   // becomes TART_HOME on every tart call
+	SharedDir          string   `json:"sharedDir"`       // host_resources bind mount
+	TartAppPath        string   `json:"tartAppPath"`     // full path to the tart binary
+	IntervalMinutes    int      `json:"intervalMinutes"` // how often the scheduler acts
+	WindowMinutes      int      `json:"windowMinutes"`   // how long each VM stays up
+	MaxConcurrent      int      `json:"maxConcurrent"`   // max VMs running at once
+	SchedulerMode      string   `json:"schedulerMode"`   // "random" | "sequential" (alphabetical)
+	Excluded           []string `json:"excluded"`        // VM names never auto-selected
+	JamfRecon          bool     `json:"jamfRecon"`       // run `jamf recon` after start/stop
+	Paused             bool     `json:"paused"`          // global scheduler pause
+	DailyEnabled       bool     `json:"dailyEnabled"`    // gate auto-runs to a daily time window
+	DailyStart         string   `json:"dailyStart"`      // "HH:MM" — begin running VMs
+	DailyStop          string   `json:"dailyStop"`       // "HH:MM" — stop running VMs
+	JamfBaseURL        string   `json:"jamfBaseUrl"`
+	JamfInvitationCode string   `json:"jamfInvitationCode"`
+	SSHUser            string   `json:"sshUser"`
+	SSHPassword        string   `json:"sshPassword"`     // guest SSH/sudo password; write-only
+	SSHKey             string   `json:"sshKey"`          // optional identity file path
+	SSHTimeoutSec      int      `json:"sshTimeoutSec"`   // ssh connect timeout
+	StatusCommand      string   `json:"statusCommand"`   // command for "Get info"
+	ShutdownCommand    string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
+	ShutdownWaitSec    int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
+	RunArgs            string   `json:"runArgs"`         // extra args appended to every `tart run`
+	NetPriority        string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec     int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
+	HistoryDays        int      `json:"historyDays"`     // run-history retention in days
+	LogPath            string   `json:"logPath"`         // path to log file (rotation at 5MB)
+	ServerLabel        string   `json:"serverLabel"`     // custom label to identify this server instance
+	ShowRunningOnly    bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
+}
+
+type configView struct {
+	Config
+	SSHPasswordSet        bool `json:"sshPasswordSet"`
+	JamfInvitationCodeSet bool `json:"jamfInvitationCodeSet"`
+}
+
+func newConfigView(cfg Config) configView {
+	view := configView{
+		Config:                cfg,
+		SSHPasswordSet:        cfg.SSHPassword != "",
+		JamfInvitationCodeSet: cfg.JamfInvitationCode != "",
+	}
+	view.SSHPassword = ""
+	view.JamfInvitationCode = ""
+	return view
+}
+
+func normalizeJamfBaseURL(raw string) (string, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("Jamf Pro base URL must be an http or https URL with a hostname")
+	}
+	return raw, nil
+}
+
+func effectiveSSHCredentials(cfg Config, vm *VM) (string, string) {
+	user, password := cfg.SSHUser, cfg.SSHPassword
+	if vm != nil && vm.SSHUser != "" {
+		user = vm.SSHUser
+	}
+	if vm != nil && vm.SSHPassword != "" {
+		password = vm.SSHPassword
+	}
+	return user, password
 }
 
 func defaultConfig() Config {
@@ -404,20 +447,20 @@ type persisted struct {
 
 // stateSnapshot is what we send to the dashboard (GET /api/vms and SSE).
 type stateSnapshot struct {
-	VMs            []*VM     `json:"vms"`
-	Config         Config    `json:"config"`
-	StorageMounted bool      `json:"storageMounted"`
-	StoragePath    string    `json:"storagePath"`
-	WithinHours    bool      `json:"withinHours"` // currently inside the daily window
-	Now            time.Time `json:"now"`
-	Version        string    `json:"version"`
-	TartJSON       bool      `json:"tartJSON"`
-	TartInstalled  bool      `json:"tartInstalled"`
-	TartVersion    string    `json:"tartVersion"`
-	Tasks          []*Task   `json:"tasks"`
-	HostStats      HostStats `json:"hostStats"`
-	HostIP         string    `json:"hostIP"`
-	Logs           []string  `json:"logs"`
+	VMs            []*VM      `json:"vms"`
+	Config         configView `json:"config"`
+	StorageMounted bool       `json:"storageMounted"`
+	StoragePath    string     `json:"storagePath"`
+	WithinHours    bool       `json:"withinHours"` // currently inside the daily window
+	Now            time.Time  `json:"now"`
+	Version        string     `json:"version"`
+	TartJSON       bool       `json:"tartJSON"`
+	TartInstalled  bool       `json:"tartInstalled"`
+	TartVersion    string     `json:"tartVersion"`
+	Tasks          []*Task    `json:"tasks"`
+	HostStats      HostStats  `json:"hostStats"`
+	HostIP         string     `json:"hostIP"`
+	Logs           []string   `json:"logs"`
 }
 
 // tartVM matches the JSON emitted by `tart list --format json`.
@@ -1996,12 +2039,9 @@ func (m *Manager) snapshot() stateSnapshot {
 	}
 	sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
 
-	cfg := m.cfg
-	cfg.SSHPassword = "" // write-only from clients; never echo the stored value
-
 	return stateSnapshot{
 		VMs:            vms,
-		Config:         cfg,
+		Config:         newConfigView(m.cfg),
 		StorageMounted: m.storageMounted,
 		StoragePath:    m.cfg.VMStoragePath,
 		WithinHours:    !m.cfg.DailyEnabled || inDailyWindow(time.Now(), m.cfg.DailyStart, m.cfg.DailyStop),
@@ -2425,8 +2465,7 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		cfg := m.cfg
 		m.mu.Unlock()
-		cfg.SSHPassword = "" // write-only from clients; never echo the stored value
-		writeJSON(w, cfg)
+		writeJSON(w, newConfigView(cfg))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -2439,6 +2478,14 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if in.JamfBaseURL != "" {
+		baseURL, err := normalizeJamfBaseURL(in.JamfBaseURL)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		in.JamfBaseURL = baseURL
+	}
 
 	m.mu.Lock()
 	// Apply with sane floors; keep Listen change for next restart (we don't
@@ -2446,6 +2493,7 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	prevListen := m.cfg.Listen
 	prevPaused := m.cfg.Paused
 	prevPassword := m.cfg.SSHPassword
+	prevInvitationCode := m.cfg.JamfInvitationCode
 	m.cfg = in
 	if m.cfg.Listen == "" {
 		m.cfg.Listen = prevListen
@@ -2455,6 +2503,9 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// than "clear it".
 	if m.cfg.SSHPassword == "" {
 		m.cfg.SSHPassword = prevPassword
+	}
+	if m.cfg.JamfInvitationCode == "" {
+		m.cfg.JamfInvitationCode = prevInvitationCode
 	}
 	if m.cfg.IntervalMinutes < 1 {
 		m.cfg.IntervalMinutes = 1
