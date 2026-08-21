@@ -21,6 +21,16 @@ This VM orchestration server fully relies on Tart and Apple's virtualization fra
 - **Per-VM actions** — Run, Stop, Restart, Send command (SSH), Get info (SSH
   status command, on demand only), and Screen (open macOS Screen Sharing).
 - **VM management** — this server detects Tart installations and can automatically install Tart when missing. It also lets you create/clone/edit/delete VMs.
+- **Jamf base preparation** — generate an enrollment profile from a saved Jamf
+  Pro base URL and invitation code, then copy and verify it on the Desktop of
+  one running base VM over password-authenticated SFTP.
+
+To prepare a Jamf base image, start a base VM with Remote Login enabled, then
+open **VM Management → Prepare base VM for Jamf**. Save the Jamf and SSH
+settings, select the running base VM, and copy the verified profile to
+`~/Desktop/mdm_enroll.mobileconfig`. Install and configure that profile manually
+on the base VM, stop it when needed, then clone it with the existing VM controls.
+Tart Oven does not install the profile, stop the VM, or start cloning for you.
 
 <img width="1617" height="934" alt="Screenshot 2026-06-09 at 11 54 44" src="https://github.com/user-attachments/assets/d6f0a95e-23e1-4d5a-a058-f93906290b62" />
 
@@ -132,6 +142,7 @@ enabled in its Sharing settings.
 | POST | `/api/vm/delete` | `{name}` | `tart delete` (stopped) |
 | POST | `/api/vm/notes`  | `{name,notes,tags}` | update VM notes and tags |
 | GET  | `/api/vm/get`    | `?name=` | `tart get --format json` (for the edit form) |
+| POST | `/api/vm/mdm-profile` | `{name}` | generate and verify-copy the saved Jamf enrollment profile to one running VM's Desktop |
 | POST | `/api/install-tart` | — | download latest tart from GitHub → /Applications |
 | POST | `/api/server/restart` | — | re-exec the tart-oven process |
 | POST | `/api/server/stop` | — | stop the tart-oven process (boots out the agent) |
@@ -139,3 +150,6 @@ enabled in its Sharing settings.
 | GET/POST | `/api/config` | Config JSON | read / update config |
 | GET  | `/events`     | — | SSE state stream |
 | GET  | `/`           | — | the dashboard |
+
+Jamf invitation codes and SSH passwords are write-only settings: they are saved
+for profile copying but are absent from API responses.
