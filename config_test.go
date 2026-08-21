@@ -79,7 +79,7 @@ func TestHandleConfigBlankSecrets(t *testing.T) {
 	m.cfg.JamfInvitationCode = "saved-invite"
 	m.cfg.SSHPassword = "saved-password"
 
-	body, err := json.Marshal(Config{JamfBaseURL: "https://new.example/"})
+	body, err := json.Marshal(Config{JamfBaseURL: "https://new.example/", Paused: true})
 	if err != nil {
 		t.Fatal(err)
 	}

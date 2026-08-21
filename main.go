@@ -34,6 +34,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/route"
 )
 
 //go:embed index.html README.md
@@ -650,6 +652,121 @@ func (m *Manager) tartOutputTimeout(d time.Duration, home string, args ...string
 	return string(out), err
 }
 
+// pollVMIP retries transient resolver failures until an IP appears or the
+// caller's deadline expires. Tart's ARP resolver can fail immediately while
+// the guest is still booting (for example, when `arp -an` is temporarily
+// empty), even when `tart ip --wait` was requested.
+func pollVMIP(ctx context.Context, retryInterval time.Duration, probe func(context.Context) (string, error)) (string, error) {
+	if retryInterval <= 0 {
+		retryInterval = time.Millisecond
+	}
+	var lastErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("resolve VM IP before deadline: %w", err)
+		}
+		ip, err := probe(ctx)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("resolve VM IP before deadline: %w", ctxErr)
+		}
+		if ip = strings.TrimSpace(ip); err == nil && ip != "" {
+			return ip, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = errors.New("Tart returned an empty VM IP")
+		}
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", fmt.Errorf("resolve VM IP before deadline (last error: %v): %w", lastErr, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+type arpNeighbor struct {
+	IP  net.IP
+	MAC net.HardwareAddr
+}
+
+// resolveVMIP reads Tart's configured MAC address for a VM and matches it
+// against the host's native neighbor table. Reading the table in-process avoids
+// relying on `arp` output, which macOS may suppress for service descendants.
+func resolveVMIP(home, name string, neighbors func() ([]arpNeighbor, error)) (string, error) {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid VM name %q", name)
+	}
+
+	configPath := filepath.Join(home, "vms", name, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read VM network config: %w", err)
+	}
+	var config struct {
+		MACAddress string `json:"macAddress"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("parse VM network config: %w", err)
+	}
+	target, err := net.ParseMAC(config.MACAddress)
+	if err != nil {
+		return "", fmt.Errorf("parse VM MAC address %q: %w", config.MACAddress, err)
+	}
+
+	entries, err := neighbors()
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if entry.IP != nil && entry.MAC.String() == target.String() {
+			return entry.IP.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no neighbor-table entry for VM MAC %s", target)
+}
+
+// nativeARPNeighbors reads the Darwin routing information base directly. Tart
+// normally shells out to `arp -an`; that command can return empty output when
+// Tart is launched as a descendant of this Go LaunchAgent even though the same
+// neighbor entries are present here.
+func nativeARPNeighbors() ([]arpNeighbor, error) {
+	ribType := route.RIBType(syscall.NET_RT_FLAGS)
+	rib, err := route.FetchRIB(syscall.AF_UNSPEC, ribType, syscall.RTF_LLINFO)
+	if err != nil {
+		return nil, fmt.Errorf("read native neighbor table: %w", err)
+	}
+	messages, err := route.ParseRIB(ribType, rib)
+	if err != nil {
+		return nil, fmt.Errorf("parse native neighbor table: %w", err)
+	}
+	return arpNeighborsFromRouteMessages(messages), nil
+}
+
+func arpNeighborsFromRouteMessages(messages []route.Message) []arpNeighbor {
+	entries := make([]arpNeighbor, 0, len(messages))
+	for _, message := range messages {
+		routeMessage, ok := message.(*route.RouteMessage)
+		if !ok || len(routeMessage.Addrs) <= syscall.RTAX_GATEWAY {
+			continue
+		}
+		destination, ok := routeMessage.Addrs[syscall.RTAX_DST].(*route.Inet4Addr)
+		if !ok {
+			continue
+		}
+		link, ok := routeMessage.Addrs[syscall.RTAX_GATEWAY].(*route.LinkAddr)
+		if !ok || len(link.Addr) != 6 {
+			continue
+		}
+		mac := append(net.HardwareAddr(nil), link.Addr...)
+		entries = append(entries, arpNeighbor{IP: net.IP(destination.IP[:]), MAC: mac})
+	}
+	return entries
+}
+
 // maxOpAge is how long a start/stop op may stay "busy" before we consider it
 // stuck (e.g. tart hung or the daemon was restarted mid-op) and clear it so the
 // VM's real state can be reconciled. It is comfortably above the worst-case
@@ -1113,9 +1230,14 @@ func (m *Manager) doRun(name, trigger string) {
 		go runJamf()
 	}
 
-	// Resolve the IP (blocks up to the configured boot timeout).
-	ip, ipErr := m.tartOutputTimeout(time.Duration(bootTimeout+15)*time.Second, home, "ip", name, "--wait", strconv.Itoa(bootTimeout), "--resolver", "arp")
-	ip = strings.TrimSpace(ip)
+	// Resolve the IP by matching Tart's configured VM MAC against the host's
+	// native neighbor table. Keep polling until the guest emits network traffic
+	// or the configured boot deadline expires.
+	ipCtx, cancelIP := context.WithTimeout(context.Background(), time.Duration(bootTimeout)*time.Second)
+	ip, ipErr := pollVMIP(ipCtx, time.Second, func(context.Context) (string, error) {
+		return resolveVMIP(home, name, nativeARPNeighbors)
+	})
+	cancelIP()
 
 	// Boot failure: the VM came up but never handed us an IP. Stop it so it
 	// doesn't hold a concurrency slot, flag it, and let the next scheduler tick
