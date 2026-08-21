@@ -89,7 +89,7 @@
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field label { font-size: 12px; color: var(--muted); }
   .field small { font-size: 11px; color: var(--grey); }
-  input[type=text], input[type=number], input[type=password], textarea {
+  input[type=text], input[type=number], input[type=password], input[type=url], textarea {
     background: var(--panel2); border: 1px solid var(--border); color: var(--text);
     border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%;
   }
@@ -329,6 +329,24 @@
     </div>
 
     <div class="panel">
+      <h2>Prepare base VM for Jamf</h2>
+      <p class="muted">Prepare one running base VM by copying the Jamf enrollment profile to its Desktop. Install and configure the profile on that base VM, then clone the base so each cloned VM inherits the profile on its Desktop.</p>
+      <div class="grid">
+        <div class="field"><label>Jamf Pro base URL</label><input type="url" id="jamfBaseUrl" placeholder="https://company.jamfcloud.com"></div>
+        <div class="field"><label>Invitation code</label><input type="password" id="jamfInvitationCode" autocomplete="new-password"></div>
+        <div class="field"><label>Default SSH username</label><input type="text" id="sshUser" value="admin"><small>Per-VM credentials override this value</small></div>
+        <div class="field"><label>Default SSH password</label><input type="password" id="sshPassword" autocomplete="new-password"></div>
+      </div>
+      <div class="actions"><button id="saveJamfBtn">Save settings</button><span id="jamfSaveStatus" class="muted"></span></div>
+      <div class="ssh-row">
+        <select id="mdmTarget"></select>
+        <button id="copyMdmBtn">Copy profile to Desktop</button>
+        <span class="muted mono">~/Desktop/mdm_enroll.mobileconfig</span>
+      </div>
+      <div id="mdmCopyStatus" class="muted"></div>
+    </div>
+
+    <div class="panel">
       <h2>Edit a VM</h2>
       <div class="ssh-row">
         <select id="editSelect" onchange="loadVMInfo()"></select>
@@ -341,7 +359,7 @@
         <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
         <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
         <div class="field"><label>Custom SSH user</label><input type="text" id="editSshUser" placeholder="blank = use default"></div>
-        <div class="field"><label>Custom sudo password</label><input type="password" id="editSshPassword" autocomplete="new-password" placeholder="blank = use default / keep current"></div>
+        <div class="field"><label>Custom SSH password</label><input type="password" id="editSshPassword" autocomplete="new-password" placeholder="blank = use default / keep current"></div>
         <div class="field"><label>Tags</label><input type="text" id="editTags" placeholder="comma-separated tags"></div>
         <div class="field" style="grid-column: span 2"><label>Notes</label><textarea id="editNotes" rows="2" placeholder="Notes about this VM"></textarea></div>
       </div>
@@ -363,7 +381,7 @@
 
     <div class="panel guide">
       <h2>SSH setup guide</h2>
-      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from your SSH user/key settings above.</p>
+      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from the Default SSH username in <b>Prepare base VM for Jamf</b> and the SSH identity file in Configuration.</p>
 
       <h3>1 · Generate a key (once)</h3>
       <div class="cmd"><code id="cmdKeygen"></code><button onclick="copyCmd('cmdKeygen', this)">Copy</button></div>
@@ -377,7 +395,7 @@
       <p class="muted">You'll enter the VM's password once. The VM must have <b>Remote Login</b> on (System Settings → General → Sharing). This command fixes the <span class="mono">~/.ssh</span> permissions that often block <span class="mono">ssh-copy-id</span>, and skips host-key fingerprint prompts / <span class="mono">known_hosts</span> entries (so reused VM IPs never cause conflicts — the same way Tart Oven connects).</p>
 
       <h3>3 · Point Tart Oven at the key</h3>
-      <p class="muted">Set <b>SSH identity file</b> above to <span class="mono" id="guideKeyPath">~/.ssh/tart-oven</span>, then click <b>Save configuration</b>. Test it with <b>Get info</b> on a running VM.</p>
+      <p class="muted">Set <b>SSH identity file</b> in Configuration to <span class="mono" id="guideKeyPath">~/.ssh/tart-oven</span>, then click <b>Save configuration</b>. Test it with <b>Get info</b> on a running VM.</p>
 
       <h3>Tip · Do it once for the whole fleet</h3>
       <p class="muted">Add the public key to your <b>TEMPLATE</b> VM's <span class="mono">~/.ssh/authorized_keys</span> before cloning — every clone inherits it, so you never repeat steps 1–2.</p>
@@ -421,8 +439,6 @@
     <div class="panel">
       <h2>SSH &amp; Commands</h2>
       <div class="grid">
-        <div class="field"><label>Default SSH user</label><input type="text" id="sshUser"><small>Can be overwritten per VM</small></div>
-        <div class="field"><label>Default sudo password</label><input type="password" id="sshPassword" autocomplete="new-password" placeholder="•••••• (leave blank to keep current)"><small>Used for passwordless shutdown; can be overwritten per VM</small></div>
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
@@ -550,7 +566,8 @@ function fillConfig(c) {
   set("vmStoragePath", c.vmStoragePath);
   set("sharedDir", c.sharedDir);
   set("tartAppPath", c.tartAppPath || "/Applications/tart.app/Contents/MacOS/tart");
-  set("sshUser", c.sshUser);
+  set("jamfBaseUrl", c.jamfBaseUrl || "");
+  set("sshUser", c.sshUser || "admin");
   set("sshKey", c.sshKey || "");
   set("sshTimeoutSec", c.sshTimeoutSec);
   set("statusCommand", c.statusCommand);
@@ -566,6 +583,9 @@ function fillConfig(c) {
   document.getElementById("showRunningOnly").checked = !!c.showRunningOnly;
   configLoaded = true;
 }
+function setSavedSecretPlaceholder(id, isSaved) {
+  document.getElementById(id).placeholder = isSaved ? "•••••••• (saved)" : "";
+}
 function readConfig() {
   const num = (id) => parseInt(document.getElementById(id).value, 10) || 0;
   const str = (id) => document.getElementById(id).value.trim();
@@ -580,23 +600,30 @@ function readConfig() {
     dailyStart: str("dailyStart"), dailyStop: str("dailyStop"),
     excluded,
     paused: latest ? latest.config.paused : false,
+    jamfBaseUrl: str("jamfBaseUrl"), jamfInvitationCode: str("jamfInvitationCode"),
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
   };
 }
-async function saveConfig(extra) {
+async function saveConfig(extra, statusId) {
   const cfg = Object.assign(readConfig(), extra || {});
-  const s = document.getElementById("cfgStatus");
+  const s = document.getElementById(statusId || "cfgStatus");
   try {
+    if (s) s.textContent = "saving…";
     const res = await api("/api/config", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg)
     });
+    if (res.ok) {
+      document.getElementById("sshPassword").value = "";
+      document.getElementById("jamfInvitationCode").value = "";
+    }
     if (s) { s.textContent = res.ok ? "saved ✓" : "save failed"; setTimeout(() => s.textContent = "", 2500); }
   } catch (e) { if (s) s.textContent = "error: " + e.message; }
 }
 document.getElementById("saveBtn").onclick = () => saveConfig();
+document.getElementById("saveJamfBtn").onclick = () => saveConfig({}, "jamfSaveStatus");
 document.getElementById("pauseBtn").onclick = () => saveConfig({ paused: !(latest && latest.config.paused) });
 document.getElementById("refreshBtn").onclick = async (e) => {
   const btn = e.currentTarget;
@@ -757,6 +784,8 @@ function render(state) {
   }
 
   if (!configLoaded) fillConfig(state.config);
+  setSavedSecretPlaceholder("sshPassword", state.config.sshPasswordSet);
+  setSavedSecretPlaceholder("jamfInvitationCode", state.config.jamfInvitationCodeSet);
 
   // Update server label in header and page title
   const label = state.config.serverLabel || "";
@@ -1021,7 +1050,39 @@ function fillMgmtSelects(vms) {
   fillOne("cloneSource", vms, { preferTemplate: true });
   fillOne("editSelect", vms);
   fillOne("deleteSelect", vms);
+  const running = vms.filter(v => v.state === "running");
+  fillOne("mdmTarget", running);
+  const copyBtn = document.getElementById("copyMdmBtn");
+  if (!running.length) {
+    document.getElementById("mdmTarget").innerHTML = '<option value="">Start the base VM first</option>';
+    copyBtn.disabled = true;
+  } else {
+    copyBtn.disabled = false;
+  }
 }
+
+async function copyMdmProfile() {
+  const name = document.getElementById("mdmTarget").value;
+  const btn = document.getElementById("copyMdmBtn");
+  const status = document.getElementById("mdmCopyStatus");
+  if (!name) { status.textContent = "Start and select a base VM first."; return; }
+  btn.disabled = true;
+  status.textContent = "Connecting and copying profile…";
+  try {
+    const res = await api("/api/vm/mdm-profile", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error((data.stage ? data.stage + ": " : "") + (data.error || "copy failed"));
+    status.textContent = "Copied to " + data.name + " at " + data.path + " · UUID " + data.payloadUUID;
+  } catch (err) {
+    status.textContent = "Copy failed — " + err.message;
+  } finally {
+    btn.disabled = !(latest && latest.vms.some(v => v.state === "running"));
+  }
+}
+document.getElementById("copyMdmBtn").onclick = copyMdmProfile;
 
 function updateCreateMode() {
   const mode = document.querySelector('input[name="createMode"]:checked').value;
