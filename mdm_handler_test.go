@@ -1,14 +1,26 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	testJamfInvitationCode  = "invite-code-secret"
+	testGlobalSSHUser       = "global-user-secret"
+	testGlobalSSHPassword   = "global-password-secret"
+	testVMSSHUser           = "vm-user-secret"
+	testVMSSHPassword       = "vm-password-secret"
+	testResolverErrorSecret = "resolver-underlying-secret"
+	testCopierErrorSecret   = "copier-underlying-secret"
 )
 
 type recordingMDMProfileCopier struct {
@@ -35,9 +47,9 @@ func newMDMHandlerManager() *Manager {
 	return &Manager{
 		cfg: Config{
 			JamfBaseURL:        "https://jamf.example",
-			JamfInvitationCode: "invite-code",
-			SSHUser:            "admin",
-			SSHPassword:        "admin",
+			JamfInvitationCode: testJamfInvitationCode,
+			SSHUser:            testGlobalSSHUser,
+			SSHPassword:        testGlobalSSHPassword,
 			SSHTimeoutSec:      15,
 		},
 		vms: map[string]*VM{
@@ -54,10 +66,22 @@ func performMDMProfileRequest(t *testing.T, m *Manager, method, body string) *ht
 	return rr
 }
 
-func decodeMDMProfileResponse(t *testing.T, rr *httptest.ResponseRecorder) mdmProfileResponse {
+func decodeMDMProfileResponse(t *testing.T, rr *httptest.ResponseRecorder, wantKeys ...string) mdmProfileResponse {
 	t.Helper()
 	if got := rr.Result().Header.Get("Content-Type"); got != "application/json" {
 		t.Fatalf("Content-Type=%q, want application/json; body=%s", got, rr.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw response %q: %v", rr.Body.String(), err)
+	}
+	if len(raw) != len(wantKeys) {
+		t.Fatalf("response keys=%v, want exactly %v; body=%s", rawJSONKeys(raw), wantKeys, rr.Body.String())
+	}
+	for _, key := range wantKeys {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("response keys=%v, missing %q; body=%s", rawJSONKeys(raw), key, rr.Body.String())
+		}
 	}
 	var response mdmProfileResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
@@ -66,13 +90,49 @@ func decodeMDMProfileResponse(t *testing.T, rr *httptest.ResponseRecorder) mdmPr
 	return response
 }
 
-func assertMDMResponseSecretSafe(t *testing.T, body string) {
+func rawJSONKeys(raw map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func assertMDMSecretSafe(t *testing.T, output string) {
 	t.Helper()
-	for _, secret := range []string{"invite-code", `"password"`, "admin", "underlying-secret", "<plist"} {
-		if strings.Contains(body, secret) {
-			t.Fatalf("response leaked secret %q: %s", secret, body)
+	for _, secret := range []string{
+		testJamfInvitationCode,
+		testGlobalSSHUser,
+		testGlobalSSHPassword,
+		testVMSSHUser,
+		testVMSSHPassword,
+		testResolverErrorSecret,
+		testCopierErrorSecret,
+		`"password"`,
+		"<plist",
+	} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("output leaked secret %q: %s", secret, output)
 		}
 	}
+}
+
+func captureMDMLog(t *testing.T, run func()) string {
+	t.Helper()
+	var captured bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	previousPrefix := log.Prefix()
+	log.SetOutput(&captured)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	defer func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	}()
+	run()
+	return captured.String()
 }
 
 func TestHandleMDMProfileSuccess(t *testing.T) {
@@ -89,20 +149,26 @@ func TestHandleMDMProfileSuccess(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if fake.target.Address != "192.0.2.10:22" || fake.target.Username != "admin" || fake.target.Password != "admin" {
+	if fake.target.Address != "192.0.2.10:22" || fake.target.Username != testGlobalSSHUser || fake.target.Password != testGlobalSSHPassword {
 		t.Fatalf("target=%#v", fake.target)
 	}
 	if fake.target.Timeout != 15*time.Second {
 		t.Fatalf("timeout=%s, want 15s", fake.target.Timeout)
 	}
-	if !fake.called || fake.payloadUUID == "" || !strings.Contains(string(fake.profile), "invite-code") {
+	if !fake.called || fake.payloadUUID == "" {
 		t.Fatalf("copy arguments missing generated profile: called=%v uuid=%q profile=%q", fake.called, fake.payloadUUID, fake.profile)
 	}
-	response := decodeMDMProfileResponse(t, rr)
+	if err := validateMDMProfile(fake.profile, mdmProfileInput{
+		BaseURL:        "https://jamf.example",
+		InvitationCode: testJamfInvitationCode,
+	}, fake.payloadUUID); err != nil {
+		t.Fatalf("copied profile is not the generated Jamf profile: %v; profile=%q", err, fake.profile)
+	}
+	response := decodeMDMProfileResponse(t, rr, "ok", "name", "path", "payloadUUID")
 	if !response.OK || response.Name != "base" || response.Path != mdmProfileDisplayPath || response.PayloadUUID != fake.payloadUUID {
 		t.Fatalf("response=%#v", response)
 	}
-	assertMDMResponseSecretSafe(t, rr.Body.String())
+	assertMDMSecretSafe(t, rr.Body.String())
 }
 
 func TestHandleMDMProfileRouteIsRegistered(t *testing.T) {
@@ -192,14 +258,18 @@ func TestHandleMDMProfileRejectsInvalidRequests(t *testing.T) {
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status=%d body=%s, want %d", rr.Code, rr.Body.String(), tt.wantStatus)
 			}
-			response := decodeMDMProfileResponse(t, rr)
+			wantKeys := []string{"ok", "error"}
+			if tt.wantStage != "" {
+				wantKeys = []string{"ok", "name", "stage", "error"}
+			}
+			response := decodeMDMProfileResponse(t, rr, wantKeys...)
 			if response.OK || response.Error == "" || response.Stage != tt.wantStage {
 				t.Fatalf("response=%#v, want failed stage %q", response, tt.wantStage)
 			}
 			if fake.called {
 				t.Fatal("copier called for invalid request")
 			}
-			assertMDMResponseSecretSafe(t, rr.Body.String())
+			assertMDMSecretSafe(t, rr.Body.String())
 		})
 	}
 }
@@ -238,25 +308,29 @@ func TestHandleMDMProfileReportsInjectedIPFailure(t *testing.T) {
 	m.vms["base"].IP = ""
 	m.mdmCopier = &recordingMDMProfileCopier{}
 	m.mdmResolveIP = func(context.Context, string, string) (string, error) {
-		return "", errors.New("underlying-secret")
+		return "", errors.New(testResolverErrorSecret)
 	}
 
-	rr := performMDMProfileRequest(t, m, http.MethodPost, `{"name":"base"}`)
+	var rr *httptest.ResponseRecorder
+	logs := captureMDMLog(t, func() {
+		rr = performMDMProfileRequest(t, m, http.MethodPost, `{"name":"base"}`)
+	})
 
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	response := decodeMDMProfileResponse(t, rr)
+	response := decodeMDMProfileResponse(t, rr, "ok", "name", "stage", "error")
 	if response.Stage != mdmStageIP || response.Error == "" {
 		t.Fatalf("response=%#v", response)
 	}
-	assertMDMResponseSecretSafe(t, rr.Body.String())
+	assertMDMSecretSafe(t, rr.Body.String())
+	assertMDMSecretSafe(t, logs)
 }
 
 func TestHandleMDMProfileUsesPerVMCredentialsWithoutHoldingManagerLock(t *testing.T) {
 	m := newMDMHandlerManager()
-	m.vms["base"].SSHUser = "builder"
-	m.vms["base"].SSHPassword = "builder-pass"
+	m.vms["base"].SSHUser = testVMSSHUser
+	m.vms["base"].SSHPassword = testVMSSHPassword
 	fake := &recordingMDMProfileCopier{
 		checkLock: func() bool {
 			if !m.mu.TryLock() {
@@ -273,10 +347,10 @@ func TestHandleMDMProfileUsesPerVMCredentialsWithoutHoldingManagerLock(t *testin
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if fake.target.Username != "builder" || fake.target.Password != "builder-pass" {
+	if fake.target.Username != testVMSSHUser || fake.target.Password != testVMSSHPassword {
 		t.Fatalf("target=%#v", fake.target)
 	}
-	assertMDMResponseSecretSafe(t, rr.Body.String())
+	assertMDMSecretSafe(t, rr.Body.String())
 }
 
 func TestHandleMDMProfileMapsTypedStageErrorsSafely(t *testing.T) {
@@ -297,19 +371,23 @@ func TestHandleMDMProfileMapsTypedStageErrorsSafely(t *testing.T) {
 		t.Run(string(tt.stage), func(t *testing.T) {
 			m := newMDMHandlerManager()
 			m.mdmCopier = &recordingMDMProfileCopier{
-				err: &mdmStageError{Stage: tt.stage, Err: errors.New("underlying-secret")},
+				err: &mdmStageError{Stage: tt.stage, Err: errors.New(testCopierErrorSecret)},
 			}
 
-			rr := performMDMProfileRequest(t, m, http.MethodPost, `{"name":"base"}`)
+			var rr *httptest.ResponseRecorder
+			logs := captureMDMLog(t, func() {
+				rr = performMDMProfileRequest(t, m, http.MethodPost, `{"name":"base"}`)
+			})
 
 			if rr.Code != tt.wantStatus {
 				t.Fatalf("status=%d body=%s, want %d", rr.Code, rr.Body.String(), tt.wantStatus)
 			}
-			response := decodeMDMProfileResponse(t, rr)
+			response := decodeMDMProfileResponse(t, rr, "ok", "name", "stage", "error")
 			if response.Stage != tt.stage || response.Error != tt.wantError || response.OK {
 				t.Fatalf("response=%#v", response)
 			}
-			assertMDMResponseSecretSafe(t, rr.Body.String())
+			assertMDMSecretSafe(t, rr.Body.String())
+			assertMDMSecretSafe(t, logs)
 		})
 	}
 }
@@ -335,11 +413,11 @@ func TestHandleMDMProfileMissingDependenciesFailSafely(t *testing.T) {
 			if rr.Code < 400 {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}
-			response := decodeMDMProfileResponse(t, rr)
+			response := decodeMDMProfileResponse(t, rr, "ok", "name", "stage", "error")
 			if response.OK || response.Error == "" {
 				t.Fatalf("response=%#v", response)
 			}
-			assertMDMResponseSecretSafe(t, rr.Body.String())
+			assertMDMSecretSafe(t, rr.Body.String())
 		})
 	}
 }
