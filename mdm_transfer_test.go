@@ -300,6 +300,12 @@ func (c *trackedNetConn) hasDeadline() bool {
 	return !c.deadline.IsZero()
 }
 
+func (c *trackedNetConn) deadlineValue() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deadline
+}
+
 func TestSSHSFTPProfileDialerCancelsHandshakeAndClosesConnection(t *testing.T) {
 	clientSide, serverSide := net.Pipe()
 	tracked := newTrackedNetConn(clientSide)
@@ -412,5 +418,79 @@ func TestSSHSFTPProfileDialerClosesPartialResourcesWhenSFTPSetupFails(t *testing
 	}
 	if gotConfig == nil || gotConfig.User != "admin" || gotConfig.Timeout != time.Second || len(gotConfig.Auth) != 1 {
 		t.Fatalf("SSH config = %#v", gotConfig)
+	}
+}
+
+func TestSFTPProfileCopierReportsProductionSFTPSetupFailureAsSFTP(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	tracked := newTrackedNetConn(clientSide)
+	t.Cleanup(func() { serverSide.Close() })
+	sshConn := &fakeSSHConn{}
+	sftpErr := errors.New("SFTP subsystem rejected")
+	copier := &sftpProfileCopier{dialer: &sshSFTPProfileDialer{
+		dialContext: func(context.Context, string, string) (net.Conn, error) {
+			return tracked, nil
+		},
+		newClientConn: func(net.Conn, string, *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+			newChannels := make(chan ssh.NewChannel)
+			requests := make(chan *ssh.Request)
+			close(newChannels)
+			close(requests)
+			return sshConn, newChannels, requests, nil
+		},
+		newSFTPClient: func(*ssh.Client) (*sftp.Client, error) {
+			return nil, sftpErr
+		},
+	}}
+
+	err := copier.CopyAndVerify(context.Background(), mdmTransferTarget{
+		Address: "192.0.2.10:22", Username: "admin", Password: "secret", Timeout: time.Second,
+	}, []byte("profile uuid-123"), "uuid-123")
+	var stageErr *mdmStageError
+	if !errors.As(err, &stageErr) {
+		t.Fatalf("error type %T, want *mdmStageError", err)
+	}
+	if stageErr.Stage != mdmStageSFTP {
+		t.Fatalf("stage = %q, want %q", stageErr.Stage, mdmStageSFTP)
+	}
+	if !errors.Is(err, sftpErr) {
+		t.Fatalf("error = %v, want SFTP setup cause", err)
+	}
+}
+
+func TestSSHSFTPProfileDialerUsesOneDeadlineForDialAndTransfer(t *testing.T) {
+	clientSide, serverSide := net.Pipe()
+	tracked := newTrackedNetConn(clientSide)
+	t.Cleanup(func() { serverSide.Close() })
+	const timeout = 250 * time.Millisecond
+	var dialDeadline time.Time
+	handshakeErr := errors.New("stop after dial")
+	dialer := sshSFTPProfileDialer{
+		dialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var ok bool
+			dialDeadline, ok = ctx.Deadline()
+			if !ok {
+				t.Fatal("DialContext did not receive a deadline")
+			}
+			time.Sleep(25 * time.Millisecond)
+			return tracked, nil
+		},
+		newClientConn: func(net.Conn, string, *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+			return nil, nil, nil, handshakeErr
+		},
+	}
+
+	_, err := dialer.Dial(context.Background(), mdmTransferTarget{
+		Address: "192.0.2.10:22", Username: "admin", Password: "secret", Timeout: timeout,
+	})
+	if !errors.Is(err, handshakeErr) {
+		t.Fatalf("error = %v, want handshake error", err)
+	}
+	connectionDeadline := tracked.deadlineValue()
+	if !connectionDeadline.Equal(dialDeadline) {
+		t.Fatalf("connection deadline = %v, DialContext deadline = %v", connectionDeadline, dialDeadline)
+	}
+	if remaining := time.Until(connectionDeadline); remaining >= timeout-10*time.Millisecond {
+		t.Fatalf("deadline restarted after dialing; remaining = %v, timeout = %v", remaining, timeout)
 	}
 }

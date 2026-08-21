@@ -67,6 +67,10 @@ func newSFTPProfileCopier() mdmProfileCopier {
 func (c *sftpProfileCopier) CopyAndVerify(ctx context.Context, target mdmTransferTarget, profile []byte, payloadUUID string) (err error) {
 	remote, err := c.dialer.Dial(ctx, target)
 	if err != nil {
+		var stageErr *mdmStageError
+		if errors.As(err, &stageErr) {
+			return err
+		}
 		return newMDMStageError(mdmStageAuthentication, "connect to guest", err)
 	}
 	defer func() {
@@ -102,17 +106,31 @@ type sshSFTPProfileDialer struct {
 }
 
 func (d *sshSFTPProfileDialer) Dial(ctx context.Context, target mdmTransferTarget) (remoteProfileFS, error) {
+	deadline := transferDeadline(ctx, target.Timeout)
+	dialCtx := ctx
+	cancelDial := func() {}
+	if !deadline.IsZero() {
+		dialCtx, cancelDial = context.WithDeadline(ctx, deadline)
+	}
+	defer cancelDial()
+
 	dialContext := d.dialContext
 	if dialContext == nil {
-		networkDialer := &net.Dialer{Timeout: target.Timeout}
+		var remaining time.Duration
+		if !deadline.IsZero() {
+			remaining = time.Until(deadline)
+			if remaining <= 0 {
+				remaining = time.Nanosecond
+			}
+		}
+		networkDialer := &net.Dialer{Timeout: remaining}
 		dialContext = networkDialer.DialContext
 	}
-	connection, err := dialContext(ctx, "tcp", target.Address)
+	connection, err := dialContext(dialCtx, "tcp", target.Address)
 	if err != nil {
 		return nil, fmt.Errorf("open SSH connection: %w", err)
 	}
 
-	deadline := transferDeadline(ctx, target.Timeout)
 	if !deadline.IsZero() {
 		if err := connection.SetDeadline(deadline); err != nil {
 			connection.Close()
@@ -165,7 +183,7 @@ func (d *sshSFTPProfileDialer) Dial(ctx context.Context, target mdmTransferTarge
 		stopWatch()
 		sshClient.Close()
 		connection.Close()
-		return nil, fmt.Errorf("start SFTP client: %w", err)
+		return nil, newMDMStageError(mdmStageSFTP, "start SFTP client", err)
 	}
 
 	return &sftpRemoteProfileFS{
