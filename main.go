@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -436,6 +438,8 @@ type Manager struct {
 	tartJSON       bool // whether `tart list --format json` is supported
 	statePath      string
 	reload         chan struct{} // poke the scheduler when interval changes
+	mdmCopier      mdmProfileCopier
+	mdmResolveIP   mdmIPResolver
 }
 
 // persisted is the on-disk shape of state.json.
@@ -2097,6 +2101,152 @@ func decodeName(r *http.Request) (string, error) {
 	return body.Name, nil
 }
 
+type mdmIPResolver func(context.Context, string, string) (string, error)
+
+type mdmProfileResponse struct {
+	OK          bool     `json:"ok"`
+	Name        string   `json:"name,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	PayloadUUID string   `json:"payloadUUID,omitempty"`
+	Stage       mdmStage `json:"stage,omitempty"`
+	Error       string   `json:"error,omitempty"`
+}
+
+func writeMDMProfileError(w http.ResponseWriter, status int, name string, stage mdmStage, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	writeJSON(w, mdmProfileResponse{Name: name, Stage: stage, Error: message})
+}
+
+func safeMDMStageError(stage mdmStage) (int, string) {
+	switch stage {
+	case mdmStageConfiguration:
+		return http.StatusBadRequest, "profile configuration is incomplete"
+	case mdmStageVM:
+		return http.StatusBadRequest, "VM is not available"
+	case mdmStageIP:
+		return http.StatusBadGateway, "could not resolve VM IP"
+	case mdmStageAuthentication:
+		return http.StatusBadGateway, "SSH authentication failed"
+	case mdmStageSFTP:
+		return http.StatusBadGateway, "SFTP upload failed"
+	case mdmStageVerification:
+		return http.StatusBadGateway, "uploaded profile verification failed"
+	default:
+		return http.StatusBadGateway, "profile transfer failed"
+	}
+}
+
+func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMDMProfileError(w, http.StatusMethodNotAllowed, "", "", "method not allowed")
+		return
+	}
+
+	name, err := decodeName(r)
+	if err != nil {
+		writeMDMProfileError(w, http.StatusBadRequest, "", "", "invalid request")
+		return
+	}
+	name = strings.TrimSpace(name)
+
+	m.mu.Lock()
+	cfg := m.cfg
+	vm := m.vms[name]
+	var vmCopy VM
+	if vm != nil {
+		vmCopy = *vm
+	}
+	m.mu.Unlock()
+
+	username, password := effectiveSSHCredentials(cfg, &vmCopy)
+	baseURL, baseURLErr := normalizeJamfBaseURL(cfg.JamfBaseURL)
+	if baseURLErr != nil || baseURL == "" || strings.TrimSpace(cfg.JamfInvitationCode) == "" ||
+		strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" || cfg.SSHTimeoutSec < 1 {
+		status, message := safeMDMStageError(mdmStageConfiguration)
+		writeMDMProfileError(w, status, name, mdmStageConfiguration, message)
+		return
+	}
+	if vm == nil || vmCopy.State != "running" {
+		status, message := safeMDMStageError(mdmStageVM)
+		writeMDMProfileError(w, status, name, mdmStageVM, message)
+		return
+	}
+
+	ip := strings.TrimSpace(vmCopy.IP)
+	if ip == "" {
+		if m.mdmResolveIP == nil {
+			log.Printf("MDM profile copy failed for VM %q at stage %s", name, mdmStageIP)
+			writeMDMProfileError(w, http.StatusInternalServerError, name, mdmStageIP, "IP resolver unavailable")
+			return
+		}
+		ip, err = m.mdmResolveIP(r.Context(), name, cfg.VMStoragePath)
+		if err != nil || strings.TrimSpace(ip) == "" {
+			log.Printf("MDM profile copy failed for VM %q at stage %s", name, mdmStageIP)
+			status, message := safeMDMStageError(mdmStageIP)
+			writeMDMProfileError(w, status, name, mdmStageIP, message)
+			return
+		}
+		ip = strings.TrimSpace(ip)
+	}
+
+	profile, payloadUUID, err := generateMDMProfile(mdmProfileInput{
+		BaseURL:        baseURL,
+		InvitationCode: cfg.JamfInvitationCode,
+	}, cryptorand.Reader)
+	if err != nil {
+		log.Printf("MDM profile copy failed for VM %q at stage %s", name, mdmStageConfiguration)
+		status, message := safeMDMStageError(mdmStageConfiguration)
+		writeMDMProfileError(w, status, name, mdmStageConfiguration, message)
+		return
+	}
+	if m.mdmCopier == nil {
+		log.Printf("MDM profile copy failed for VM %q at stage %s", name, mdmStageSFTP)
+		writeMDMProfileError(w, http.StatusInternalServerError, name, mdmStageSFTP, "profile copy service unavailable")
+		return
+	}
+
+	target := mdmTransferTarget{
+		Address:  net.JoinHostPort(ip, "22"),
+		Username: username,
+		Password: password,
+		Timeout:  time.Duration(cfg.SSHTimeoutSec) * time.Second,
+	}
+	if err := m.mdmCopier.CopyAndVerify(r.Context(), target, profile, payloadUUID); err != nil {
+		stage := mdmStageSFTP
+		var stageErr *mdmStageError
+		if errors.As(err, &stageErr) {
+			stage = stageErr.Stage
+		}
+		log.Printf("MDM profile copy failed for VM %q at stage %s", name, stage)
+		status, message := safeMDMStageError(stage)
+		writeMDMProfileError(w, status, name, stage, message)
+		return
+	}
+
+	writeJSON(w, mdmProfileResponse{
+		OK:          true,
+		Name:        name,
+		Path:        mdmProfileDisplayPath,
+		PayloadUUID: payloadUUID,
+	})
+}
+
+func (m *Manager) resolveMDMIPWithTart(ctx context.Context, name, home string) (string, error) {
+	out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", "10", "--resolver", "arp").Output()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", errors.New("resolve VM IP with Tart")
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", errors.New("Tart returned an empty VM IP")
+	}
+	return ip, nil
+}
+
 func (m *Manager) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -2436,6 +2586,7 @@ func (m *Manager) routes() *http.ServeMux {
 		m.broadcast()
 		writeJSON(w, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("/api/vm/mdm-profile", m.handleMDMProfile)
 
 	// Install or update tart (downloads the latest release either way).
 	mux.HandleFunc("/api/install-tart", func(w http.ResponseWriter, r *http.Request) {
@@ -2667,6 +2818,8 @@ func main() {
 		statePath:   *stateFlag,
 		reload:      make(chan struct{}, 1),
 	}
+	m.mdmCopier = newSFTPProfileCopier()
+	m.mdmResolveIP = m.resolveMDMIPWithTart
 	m.load()
 	if *listenFlag != "" {
 		m.cfg.Listen = *listenFlag
