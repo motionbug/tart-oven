@@ -58,8 +58,8 @@ Tart Oven does not install the profile, stop the VM, or start cloning for you.
 
 ## Build
 
-Two main source files: `main.go` and `index.html` (embedded into the binary with
-`//go:embed`).
+The application is built from Go source, the embedded `index.html` dashboard,
+and supporting profile-transfer files.
 
 ```sh
 go build -o tart-oven

@@ -23,6 +23,7 @@ func TestNormalizeJamfBaseURL(t *testing.T) {
 		{"missing scheme", "example.jamfcloud.com", "", true},
 		{"wrong scheme", "ftp://example.test", "", true},
 		{"missing host", "https:///enroll", "", true},
+		{"port without hostname", "https://:443", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -251,7 +251,7 @@ func normalizeJamfBaseURL(raw string) (string, error) {
 		return "", nil
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return "", errors.New("Jamf Pro base URL must be an http or https URL with a hostname")
 	}
 	return raw, nil

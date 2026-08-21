@@ -40,3 +40,19 @@ func TestDashboardKeepsMdmCopyDisabledWhileInFlight(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardShowsSafeConfigValidationMessage(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`const errorText = res.ok ? "" : await res.text();`,
+		`res.ok ? "saved ✓" : (errorText || "save failed")`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard does not display config validation response: missing %q", want)
+		}
+	}
+}

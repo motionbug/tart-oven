@@ -620,7 +620,8 @@ async function saveConfig(extra, statusId) {
       document.getElementById("sshPassword").value = "";
       document.getElementById("jamfInvitationCode").value = "";
     }
-    if (s) { s.textContent = res.ok ? "saved ✓" : "save failed"; setTimeout(() => s.textContent = "", 2500); }
+    const errorText = res.ok ? "" : await res.text();
+    if (s) { s.textContent = res.ok ? "saved ✓" : (errorText || "save failed"); setTimeout(() => s.textContent = "", 2500); }
   } catch (e) { if (s) s.textContent = "error: " + e.message; }
 }
 document.getElementById("saveBtn").onclick = () => saveConfig();
