@@ -6,6 +6,9 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's virtualization framework.
 
+Current release: **1.29**. See [CHANGELOG.md](CHANGELOG.md) for the complete
+Jamf preparation and VM boot-fix notes.
+
 ## What it does
 
 - **Scheduler** — Run VMs for a set window following an interval and daily
@@ -124,6 +127,18 @@ macOS Screen Sharing **on the computer viewing the dashboard** (your MacBook),
 connecting directly to the bridged VM over the LAN. This is independent of how
 the VM was started. The guest must have **Screen Sharing / Remote Management**
 enabled in its Sharing settings.
+
+### Bridged VM reports "no IP after 60s"
+
+Version 1.29 fixes a macOS service-context issue where Tart's `arp -an`
+subprocess could return empty output beneath the Go LaunchAgent. Older Tart Oven
+builds treated that immediate resolver error as a completed boot timeout and
+stopped an otherwise healthy VM.
+
+Tart Oven 1.29 reads the native macOS neighbor table directly and matches it to
+the MAC address in the VM's Tart configuration. If this message still appears
+on 1.29, confirm that the selected bridge interface is active, the guest is
+producing network traffic, and **Boot timeout** is long enough for that image.
 
 ## HTTP API
 
