@@ -45,12 +45,17 @@ const mdmProfileTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 `
 
 func generateMDMProfile(input mdmProfileInput, random io.Reader) ([]byte, string, error) {
-	if input.BaseURL == "" {
+	baseURL, err := normalizeJamfBaseURL(input.BaseURL)
+	if err != nil {
+		return nil, "", errors.New("invalid Jamf Pro base URL")
+	}
+	if baseURL == "" {
 		return nil, "", errors.New("Jamf Pro base URL is required")
 	}
 	if input.InvitationCode == "" {
 		return nil, "", errors.New("Jamf invitation code is required")
 	}
+	input.BaseURL = baseURL
 
 	payloadUUID, err := newRandomUUID(random)
 	if err != nil {
@@ -87,16 +92,28 @@ func escapeMDMProfileText(value string) string {
 }
 
 func validateMDMProfile(profile []byte, input mdmProfileInput, payloadUUID string) error {
-	if input.BaseURL == "" || input.InvitationCode == "" || payloadUUID == "" {
+	baseURL, err := normalizeJamfBaseURL(input.BaseURL)
+	if err != nil {
+		return errors.New("invalid Jamf Pro base URL")
+	}
+	if baseURL == "" || input.InvitationCode == "" || payloadUUID == "" {
 		return errors.New("missing profile validation input")
 	}
-	values, attributes, err := parseMDMProfile(profile)
+	input.BaseURL = baseURL
+	rootValues, payloadContentValues, attributes, err := parseMDMProfile(profile)
 	if err != nil {
 		return err
 	}
-	expected := map[string]string{
-		"URL":                 input.BaseURL + "/enroll/profile",
-		"Challenge":           input.InvitationCode,
+	payloadContentExpected := map[string]string{
+		"URL":       input.BaseURL + "/enroll/profile",
+		"Challenge": input.InvitationCode,
+	}
+	for key, want := range payloadContentExpected {
+		if got, ok := payloadContentValues[key]; !ok || got != want {
+			return fmt.Errorf("profile PayloadContent.%s does not match expected value", key)
+		}
+	}
+	rootExpected := map[string]string{
 		"PayloadDescription":  "MDM Profile for mobile device management",
 		"PayloadDisplayName":  "MDM Profile",
 		"PayloadType":         "Profile Service",
@@ -105,8 +122,8 @@ func validateMDMProfile(profile []byte, input mdmProfileInput, payloadUUID strin
 		"PayloadVersion":      "1",
 		"PayloadOrganization": "JAMF Software",
 	}
-	for key, want := range expected {
-		if got, ok := values[key]; !ok || got != want {
+	for key, want := range rootExpected {
+		if got, ok := rootValues[key]; !ok || got != want {
 			return fmt.Errorf("profile %s does not match expected value", key)
 		}
 	}
@@ -127,13 +144,21 @@ type mdmProfileElement struct {
 	name      xml.Name
 	text      strings.Builder
 	sourceKey string
+	dict      *mdmProfileDict
 }
 
-func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
+type mdmProfileDict struct {
+	root           bool
+	payloadContent bool
+}
+
+func parseMDMProfile(profile []byte) (map[string]string, map[string]string, []string, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(profile))
-	values := make(map[string]string)
+	rootValues := make(map[string]string)
+	payloadContentValues := make(map[string]string)
 	var attributes []string
 	var stack []*mdmProfileElement
+	var dicts []*mdmProfileDict
 	pendingKey := ""
 	deviceAttributesDepth := 0
 
@@ -143,7 +168,7 @@ func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
 			break
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse profile XML: %w", err)
+			return nil, nil, nil, fmt.Errorf("parse profile XML: %w", err)
 		}
 
 		switch token := token.(type) {
@@ -151,15 +176,23 @@ func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
 			element := &mdmProfileElement{name: token.Name}
 			if token.Name.Local == "string" || token.Name.Local == "integer" {
 				element.sourceKey = pendingKey
+				if len(dicts) > 0 {
+					element.dict = dicts[len(dicts)-1]
+				}
 				pendingKey = ""
 			}
 			stack = append(stack, element)
 			if token.Name.Local == "array" {
-				if pendingKey == "DeviceAttributes" {
+				if pendingKey == "DeviceAttributes" && len(dicts) > 0 && dicts[len(dicts)-1].payloadContent {
 					deviceAttributesDepth = len(stack)
 				}
 				pendingKey = ""
 			} else if token.Name.Local == "dict" {
+				dict := &mdmProfileDict{root: len(dicts) == 0}
+				if len(dicts) == 1 && dicts[0].root && pendingKey == "PayloadContent" {
+					dict.payloadContent = true
+				}
+				dicts = append(dicts, dict)
 				pendingKey = ""
 			}
 		case xml.CharData:
@@ -168,7 +201,7 @@ func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
 			}
 		case xml.EndElement:
 			if len(stack) == 0 || stack[len(stack)-1].name != token.Name {
-				return nil, nil, errors.New("profile XML has mismatched elements")
+				return nil, nil, nil, errors.New("profile XML has mismatched elements")
 			}
 			element := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
@@ -179,9 +212,15 @@ func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
 				if deviceAttributesDepth > 0 && element.name.Local == "string" && len(stack) == deviceAttributesDepth {
 					attributes = append(attributes, element.text.String())
 				}
-				if element.sourceKey != "" {
+				if element.sourceKey != "" && element.dict != nil {
+					values := rootValues
+					if element.dict.payloadContent {
+						values = payloadContentValues
+					} else if !element.dict.root {
+						continue
+					}
 					if _, exists := values[element.sourceKey]; exists {
-						return nil, nil, fmt.Errorf("profile contains duplicate %s", element.sourceKey)
+						return nil, nil, nil, fmt.Errorf("profile contains duplicate %s", element.sourceKey)
 					}
 					values[element.sourceKey] = element.text.String()
 				}
@@ -189,11 +228,16 @@ func parseMDMProfile(profile []byte) (map[string]string, []string, error) {
 				if deviceAttributesDepth == len(stack)+1 {
 					deviceAttributesDepth = 0
 				}
+			case "dict":
+				if len(dicts) == 0 {
+					return nil, nil, nil, errors.New("profile XML has mismatched dictionaries")
+				}
+				dicts = dicts[:len(dicts)-1]
 			}
 		}
 	}
-	if len(stack) != 0 {
-		return nil, nil, errors.New("profile XML has unclosed elements")
+	if len(stack) != 0 || len(dicts) != 0 {
+		return nil, nil, nil, errors.New("profile XML has unclosed elements")
 	}
-	return values, attributes, nil
+	return rootValues, payloadContentValues, attributes, nil
 }

@@ -67,6 +67,26 @@ func TestGenerateMDMProfileRejectsMissingInput(t *testing.T) {
 	}
 }
 
+func TestGenerateMDMProfileNormalizesBaseURL(t *testing.T) {
+	input := mdmProfileInput{
+		BaseURL:        " https://example.jamfcloud.com/// ",
+		InvitationCode: "invite",
+	}
+	profile, uuid, err := generateMDMProfile(input, bytes.NewReader(make([]byte, 16)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(profile, []byte("https://example.jamfcloud.com/enroll/profile")) {
+		t.Fatalf("profile does not contain normalized enrollment URL: %s", profile)
+	}
+	if bytes.Contains(profile, []byte("///")) {
+		t.Fatalf("profile contains unnormalized URL: %s", profile)
+	}
+	if err := validateMDMProfile(profile, input, uuid); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateMDMProfileRejectsInvalidProfiles(t *testing.T) {
 	input := mdmProfileInput{BaseURL: "https://example.jamfcloud.com", InvitationCode: "invite"}
 	profile, uuid, err := generateMDMProfile(input, bytes.NewReader(make([]byte, 16)))
@@ -91,6 +111,41 @@ func TestValidateMDMProfileRejectsInvalidProfiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := validateMDMProfile(tt.profile, input, uuid); err == nil {
 				t.Fatal("validateMDMProfile returned nil error")
+			}
+		})
+	}
+}
+
+func TestValidateMDMProfileRejectsValuesOutsidePayloadContent(t *testing.T) {
+	input := mdmProfileInput{BaseURL: "https://example.jamfcloud.com", InvitationCode: "invite"}
+	profile, uuid, err := generateMDMProfile(input, bytes.NewReader(make([]byte, 16)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	url := []byte("<key>URL</key><string>https://example.jamfcloud.com/enroll/profile</string>")
+	challenge := []byte("<key>Challenge</key><string>invite</string>")
+	attributes := []byte("<key>DeviceAttributes</key><array>\n<string>UDID</string>\n<string>PRODUCT</string>\n<string>SERIAL</string>\n<string>VERSION</string>\n<string>DEVICE_NAME</string>\n<string>COMPROMISED</string>\n</array>")
+
+	tests := []struct {
+		name  string
+		field []byte
+	}{
+		{"URL", url},
+		{"challenge", challenge},
+		{"device attributes", attributes},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withoutField := bytes.Replace(profile, tt.field, nil, 1)
+			moved := bytes.Replace(
+				withoutField,
+				[]byte("</dict>\n<key>PayloadDescription</key>"),
+				append([]byte("</dict>\n"), append(tt.field, []byte("\n<key>PayloadDescription</key>")...)...),
+				1,
+			)
+			if err := validateMDMProfile(moved, input, uuid); err == nil {
+				t.Fatal("validateMDMProfile accepted values outside PayloadContent")
 			}
 		})
 	}
