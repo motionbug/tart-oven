@@ -408,10 +408,10 @@ type Task struct {
 	cancel    context.CancelFunc // cancels ctx; nil once the task has finished
 }
 
-// HostStats is a lightweight snapshot of Mac mini health, refreshed ~once a
-// minute. macOS-specific (sysctl / vm_stat / df).
+// HostStats is a lightweight compatibility snapshot of Mac mini health,
+// refreshed from the latest native performance sample about once a minute.
 type HostStats struct {
-	CPUPercent  int       `json:"cpuPercent"` // 5-min load average / cores * 100
+	CPUPercent  int       `json:"cpuPercent"` // current CPU usage, rounded to the nearest integer
 	MemUsedMB   int64     `json:"memUsedMB"`
 	MemTotalMB  int64     `json:"memTotalMB"`
 	DiskUsedGB  int64     `json:"diskUsedGB"`
@@ -2871,8 +2871,7 @@ func main() {
 		}
 	}()
 
-	// Host health stats are cheap-ish (a few exec calls) but don't need to be
-	// live — refresh once a minute.
+	// Refresh native host performance metrics once a minute.
 	go func() {
 		t := time.NewTicker(60 * time.Second)
 		defer t.Stop()

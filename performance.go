@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -55,6 +56,7 @@ type performanceSource interface {
 }
 
 type performanceCollector struct {
+	mu                           sync.Mutex
 	source                       performanceSource
 	previousDiskReadBytes        uint64
 	previousDiskWriteBytes       uint64
@@ -63,9 +65,13 @@ type performanceCollector struct {
 
 func (m *Manager) updatePerformance(now time.Time) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	collector := m.performanceCollector
+	vmStoragePath := m.cfg.VMStoragePath
+	m.mu.Unlock()
 
-	sample := m.performanceCollector.Collect(now, m.cfg.VMStoragePath)
+	sample := collector.Collect(now, vmStoragePath)
+
+	m.mu.Lock()
 	m.performanceHistory = appendPerformanceSample(m.performanceHistory, sample)
 	m.hostStats = HostStats{
 		CPUPercent:  int(math.Round(sample.CPUPercent)),
@@ -75,6 +81,7 @@ func (m *Manager) updatePerformance(now time.Time) {
 		DiskTotalGB: int64(sample.VMDiskTotalBytes / (1 << 30)),
 		UpdatedAt:   sample.Timestamp,
 	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) performanceSnapshot() PerformanceSnapshot {
@@ -100,6 +107,9 @@ func (m *Manager) handlePerformance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *performanceCollector) Collect(now time.Time, vmStoragePath string) PerformanceSample {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	sample := PerformanceSample{Timestamp: now}
 
 	if cpuPercent, err := c.source.CPUPercent(); err == nil {

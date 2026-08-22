@@ -21,6 +21,35 @@ func TestManagerUpdatePerformanceAppendsAndUpdatesHeader(t *testing.T) {
 	}
 }
 
+func TestManagerUpdatePerformanceDoesNotHoldManagerLockWhileCollecting(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	source := &fakePerformanceSource{cpuEntered: entered, cpuRelease: release}
+	m := &Manager{cfg: Config{VMStoragePath: "/vm"}, performanceCollector: &performanceCollector{source: source}}
+
+	done := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+			<-done
+		}
+	}()
+	go func() {
+		m.updatePerformance(time.Unix(100, 0))
+		close(done)
+	}()
+	<-entered
+
+	if !m.mu.TryLock() {
+		t.Fatal("Manager lock held while collecting performance metrics")
+	}
+	m.mu.Unlock()
+	close(release)
+	released = true
+	<-done
+}
+
 func TestPerformanceSnapshotCopiesHistory(t *testing.T) {
 	m := &Manager{performanceHistory: []PerformanceSample{{UptimeSeconds: 1}}}
 	s := m.performanceSnapshot()
@@ -125,9 +154,15 @@ type fakePerformanceSource struct {
 	cpuErr, memoryErr, pressureErr  error
 	systemDiskErr, vmDiskErr, ioErr error
 	uptimeErr                       error
+	cpuEntered                      chan struct{}
+	cpuRelease                      chan struct{}
 }
 
 func (s *fakePerformanceSource) CPUPercent() (float64, error) {
+	if s.cpuEntered != nil {
+		close(s.cpuEntered)
+		<-s.cpuRelease
+	}
 	return s.cpu, s.cpuErr
 }
 
