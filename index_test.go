@@ -73,3 +73,61 @@ func TestDashboardShowsSafeConfigValidationMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardContainsPerformancePage(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`data-tab="performance"`, `id="tab-performance"`,
+		`id="perfCpu"`, `id="perfMemory"`, `id="perfPressure"`,
+		`id="perfSystemDisk"`, `id="perfVMDisk"`, `id="perfUptime"`, `id="perfUpdated"`,
+		`id="cpuChart"`, `id="memoryChart"`, `id="diskCapacityChart"`, `id="diskIOChart"`,
+		`/api/performance`, `function loadPerformance`, `function renderPerformance`,
+		`function drawLineChart`, `function performanceColour`, `function formatBytes`, `function formatRate`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(html, `class="stat-label">CPU (5 min)</span>`) {
+		t.Error("header still labels actual CPU utilization as a five-minute average")
+	}
+	if !strings.Contains(html, `class="stat-label">CPU</span>`) {
+		t.Error("header missing CPU label")
+	}
+}
+
+func TestPerformancePageUsesApprovedThresholds(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`value > 95`, `value > 80`, `value > 90`,
+		`pressure === "critical"`, `pressure === "warning"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing threshold %q", want)
+		}
+	}
+}
+
+func TestPerformanceHistoryLoadsOnlyWhileVisible(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`if (id === "performance") loadPerformance();`,
+		`if (activeTab === "performance") loadPerformance();`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing guard %q", want)
+		}
+	}
+}

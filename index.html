@@ -72,7 +72,7 @@
   .dot.ok { background: var(--green); } .dot.bad { background: var(--red); }
 
   /* tabs */
-  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
   .tabbtn {
     background: var(--panel); border: 1px solid var(--border); color: var(--muted); cursor: pointer;
     padding: 9px 20px; font: inherit; font-weight: 600; border-radius: 8px;
@@ -84,6 +84,33 @@
 
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; }
   .panel h2 { margin: 0 0 14px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  /* performance */
+  .performance-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+  .performance-head h2 { margin: 0; font-size: 17px; }
+  .performance-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+  .performance-cards, .performance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .performance-cards { margin-bottom: 18px; }
+  .perf-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .perf-label { margin: 0; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .perf-metric-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 5px; }
+  .perf-value { font-size: 21px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .perf-status { color: var(--grey); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .perf-detail { margin: 3px 0 0; color: var(--grey); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .perf-chart { padding-bottom: 12px; }
+  .perf-chart-head, .perf-legend { display: flex; align-items: center; gap: 14px; }
+  .perf-chart-head { justify-content: space-between; margin-bottom: 7px; }
+  .perf-chart-head h2 { margin: 0; }
+  .perf-chart-status { color: var(--grey); font-size: 12px; font-weight: 600; }
+  .perf-legend { min-height: 18px; margin-bottom: 5px; color: var(--muted); font-size: 11px; flex-wrap: wrap; }
+  .perf-key { display: inline-flex; align-items: center; gap: 6px; }
+  .perf-key::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--key-colour); }
+  .perf-key.pressure::before { width: 11px; height: 3px; border-radius: 2px; }
+  .perf-chart canvas { display: block; width: 100%; height: 170px; }
+  @media (max-width: 760px) {
+    .performance-cards, .performance-grid { grid-template-columns: 1fr; }
+    .performance-head { align-items: flex-start; }
+  }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 18px; }
   .field { display: flex; flex-direction: column; gap: 4px; }
@@ -225,7 +252,7 @@
   <h1>🖥️ Tart Oven</h1>
   <div class="hostbar">
     <span id="serverLabelDisplay" class="server-label"></span>
-    <div class="stat"><span class="stat-label">CPU (5 min)</span><span id="statCpu" class="stat-val">—</span></div>
+    <div class="stat"><span class="stat-label">CPU</span><span id="statCpu" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">RAM</span><span id="statRam" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">VM disk</span><span id="statDisk" class="stat-val">—</span></div>
     <div class="meta" id="hmeta">connecting…</div>
@@ -241,6 +268,7 @@
 
   <div class="tabs">
     <button class="tabbtn active" data-tab="dashboard">Dashboard</button>
+    <button class="tabbtn" data-tab="performance">Performance</button>
     <button class="tabbtn" data-tab="vmm">VM Management</button>
     <button class="tabbtn" data-tab="config">Configuration</button>
     <button class="tabbtn" data-tab="logs">Logs</button>
@@ -301,7 +329,65 @@
 
   </div>
 
-  <!-- ================= TAB 2: VM MANAGEMENT ================= -->
+  <!-- ================= TAB 2: PERFORMANCE ================= -->
+  <div id="tab-performance" class="tab">
+    <div class="performance-head">
+      <div>
+        <h2>Performance</h2>
+        <p>Current host utilization and up to 24 hours of one-minute samples.</p>
+      </div>
+      <button id="perfRefreshBtn" class="ghost">Refresh now</button>
+    </div>
+
+    <div class="performance-cards" aria-live="polite">
+      <article id="perfCpu" class="perf-card">
+        <p class="perf-label">CPU</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfMemory" class="perf-card">
+        <p class="perf-label">Memory used</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfPressure" class="perf-card">
+        <p class="perf-label">Memory pressure</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfSystemDisk" class="perf-card">
+        <p class="perf-label">System disk</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfVMDisk" class="perf-card">
+        <p class="perf-label">VM storage</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfUptime" class="perf-card">
+        <p class="perf-label">Uptime</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+      <article id="perfUpdated" class="perf-card">
+        <p class="perf-label">Last update</p><div class="perf-metric-row"><strong class="perf-value">Unavailable</strong><span class="perf-status">Unavailable</span></div><p class="perf-detail">Waiting for a sample</p>
+      </article>
+    </div>
+
+    <div class="performance-grid">
+      <article class="panel perf-chart">
+        <div class="perf-chart-head"><h2>CPU utilization</h2><span id="cpuChartStatus" class="perf-chart-status">Unavailable</span></div>
+        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--accent)">CPU %</span><span style="margin-left:auto">0–100%</span></div>
+        <canvas id="cpuChart" role="img" aria-label="CPU utilization over the retained history"></canvas>
+      </article>
+      <article class="panel perf-chart">
+        <div class="perf-chart-head"><h2>Memory &amp; pressure</h2><span id="memoryChartStatus" class="perf-chart-status">Unavailable</span></div>
+        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--green)">Memory used %</span><span class="perf-key pressure" style="--key-colour:var(--amber)">Pressure state</span></div>
+        <canvas id="memoryChart" role="img" aria-label="Memory use and pressure over the retained history"></canvas>
+      </article>
+      <article class="panel perf-chart">
+        <div class="perf-chart-head"><h2>Disk capacity</h2><span id="diskCapacityChartStatus" class="perf-chart-status">Unavailable</span></div>
+        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--accent)">System</span><span class="perf-key" style="--key-colour:var(--amber)">VM storage</span></div>
+        <canvas id="diskCapacityChart" role="img" aria-label="System and VM storage capacity over the retained history"></canvas>
+      </article>
+      <article class="panel perf-chart">
+        <div class="perf-chart-head"><h2>Disk I/O</h2><span id="diskIOChartStatus" class="perf-chart-status">Unavailable</span></div>
+        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--accent)">Read</span><span class="perf-key" style="--key-colour:var(--amber)">Write</span><span id="diskIOCurrent" style="margin-left:auto">Unavailable</span></div>
+        <canvas id="diskIOChart" role="img" aria-label="Disk read and write throughput over the retained history"></canvas>
+      </article>
+    </div>
+  </div>
+
+  <!-- ================= TAB 3: VM MANAGEMENT ================= -->
   <div id="tab-vmm" class="tab">
 
     <div class="panel">
@@ -524,6 +610,9 @@ let latest = null;       // last state snapshot
 let activeTab = "dashboard";
 let histTimer = null;
 let mdmCopyInFlight = false;
+let performanceLoadInFlight = false;
+let latestPerformanceSnapshot = null;
+let performanceResizeTimer = null;
 
 async function api(path, opts) {
   opts = opts || {};
@@ -549,8 +638,252 @@ function showTab(id) {
   document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
   if (id === "logs") loadHistory();
   if (id === "guide") loadReadme();
+  if (id === "performance") loadPerformance();
 }
 document.querySelectorAll(".tabbtn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+// ---- performance ----
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "Unavailable";
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / Math.pow(1024, unit);
+  const digits = unit === 0 || amount >= 100 ? 0 : (amount >= 10 ? 1 : 2);
+  return amount.toFixed(digits) + " " + units[unit];
+}
+
+function formatRate(value) {
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate >= 0 ? formatBytes(rate) + "/s" : "Unavailable";
+}
+
+function performanceColour(kind, value) {
+  if (kind === "cpu") {
+    if (value > 95) return "var(--red)";
+    if (value > 80) return "var(--amber)";
+  }
+  if (kind === "disk") {
+    if (value > 90) return "var(--red)";
+    if (value > 80) return "var(--amber)";
+  }
+  if (kind === "pressure") {
+    const pressure = value;
+    if (pressure === "critical") return "var(--red)";
+    if (pressure === "warning") return "var(--amber)";
+  }
+  return "var(--green)";
+}
+
+function drawLineChart(canvas, series, options) {
+  const width = Math.max(canvas.clientWidth, 280);
+  const height = 170;
+  const dpr = Math.max(window.devicePixelRatio || 1, 1);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const css = getComputedStyle(document.documentElement);
+  const resolveColour = colour => {
+    if (!colour) return css.getPropertyValue("--accent").trim();
+    if (colour.startsWith("--")) return css.getPropertyValue(colour).trim();
+    const variable = colour.match(/^var\((--[^)]+)\)$/);
+    return variable ? css.getPropertyValue(variable[1]).trim() : colour;
+  };
+  const border = css.getPropertyValue("--border").trim();
+  const muted = css.getPropertyValue("--muted").trim();
+  const left = 43, right = 10, top = 10, bottom = 25;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const usableSeries = (series || []).filter(item => (item.values || []).some(Number.isFinite));
+  const markers = options.markers || [];
+  const hasMarkers = markers.some(Boolean);
+  const count = Math.max(2, (options.timestamps || []).length, ...usableSeries.map(item => item.values.length));
+  const values = usableSeries.flatMap(item => item.values.filter(Number.isFinite));
+  const minimum = options.min == null ? 0 : options.min;
+  const observedMaximum = values.length ? Math.max(...values) : 0;
+  const maximum = options.max == null ? Math.max(observedMaximum * 1.1, 1) : options.max;
+  const yLabel = options.yFormatter || (value => Math.round(value).toString());
+  const xAt = index => left + (index / (count - 1)) * plotWidth;
+  const yAt = value => top + (1 - (value - minimum) / Math.max(maximum - minimum, 1)) * plotHeight;
+
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const y = top + (plotHeight * i / 3);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke();
+  }
+  ctx.fillStyle = muted;
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
+  ctx.fillText(yLabel(maximum), left - 6, top);
+  ctx.fillText(yLabel(minimum), left - 6, top + plotHeight);
+
+  usableSeries.forEach(item => {
+    ctx.strokeStyle = resolveColour(item.colour);
+    ctx.lineWidth = item.width || 2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    let open = false;
+    item.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) { open = false; return; }
+      const x = xAt(index), y = yAt(value);
+      if (open) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      open = true;
+    });
+    ctx.stroke();
+  });
+
+  markers.forEach((marker, index) => {
+    if (!marker) return;
+    ctx.fillStyle = resolveColour(marker.colour);
+    ctx.beginPath();
+    ctx.arc(xAt(index), top + 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  if (!usableSeries.length && !hasMarkers) {
+    ctx.fillStyle = muted;
+    ctx.font = "12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Unavailable", left + plotWidth / 2, top + plotHeight / 2);
+  }
+
+  const timestamps = options.timestamps || [];
+  const timeLabel = value => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  ctx.fillStyle = muted;
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "bottom";
+  ctx.textAlign = "left";
+  ctx.fillText(timestamps.length ? timeLabel(timestamps[0]) : "Oldest", left, height - 1);
+  ctx.textAlign = "right";
+  ctx.fillText(timestamps.length ? timeLabel(timestamps[timestamps.length - 1]) : "Newest", width - right, height - 1);
+}
+
+function renderPerformance(snapshot) {
+  latestPerformanceSnapshot = snapshot || { latest: {}, history: [] };
+  const sample = latestPerformanceSnapshot.latest || {};
+  const history = Array.isArray(latestPerformanceSnapshot.history) ? latestPerformanceSnapshot.history : [];
+  const unavailable = "var(--grey)";
+  const percentage = (used, total, available) => available && total > 0 ? used / total * 100 : null;
+  const statusText = (kind, value) => {
+    if (kind === "cpu") return value > 95 ? "Critical" : (value > 80 ? "Warning" : "Normal");
+    if (kind === "disk") return value > 90 ? "Critical" : (value > 80 ? "Warning" : "Normal");
+    if (kind === "pressure") return value === "critical" ? "Critical" : (value === "warning" ? "Warning" : "Normal");
+    return "Available";
+  };
+  const setCard = (id, available, value, status, detail, colour) => {
+    const card = document.getElementById(id);
+    card.querySelector(".perf-value").textContent = available ? value : "Unavailable";
+    card.querySelector(".perf-status").textContent = available ? status : "Unavailable";
+    card.querySelector(".perf-status").style.color = available ? colour : unavailable;
+    card.querySelector(".perf-detail").textContent = available ? detail : "Metric unavailable in the latest sample";
+  };
+  const setChartStatus = (id, available, status, colour) => {
+    const element = document.getElementById(id);
+    element.textContent = available ? status : "Unavailable";
+    element.style.color = available ? colour : unavailable;
+  };
+
+  const cpuAvailable = !!sample.cpuAvailable;
+  const cpu = Number(sample.cpuPercent) || 0;
+  setCard("perfCpu", cpuAvailable, cpu.toFixed(1) + "%", statusText("cpu", cpu), "Current host utilization", performanceColour("cpu", cpu));
+
+  const memoryAvailable = !!sample.memoryAvailable;
+  const memoryPercent = percentage(sample.memoryUsedBytes, sample.memoryTotalBytes, memoryAvailable);
+  setCard("perfMemory", memoryAvailable, formatBytes(sample.memoryUsedBytes), "Available",
+    "of " + formatBytes(sample.memoryTotalBytes) + " physical · " + (memoryPercent == null ? "—" : memoryPercent.toFixed(1) + "%"), "var(--green)");
+
+  const pressureAvailable = !!sample.pressureAvailable;
+  const pressure = sample.memoryPressure || "normal";
+  const pressureLabel = pressure.charAt(0).toUpperCase() + pressure.slice(1);
+  setCard("perfPressure", pressureAvailable, pressureLabel, statusText("pressure", pressure), "macOS kernel pressure state", performanceColour("pressure", pressure));
+
+  const systemDiskAvailable = !!sample.systemDiskAvailable;
+  const systemDiskPercent = percentage(sample.systemDiskUsedBytes, sample.systemDiskTotalBytes, systemDiskAvailable);
+  setCard("perfSystemDisk", systemDiskAvailable, systemDiskPercent == null ? "—" : systemDiskPercent.toFixed(1) + "%",
+    systemDiskPercent == null ? "Available" : statusText("disk", systemDiskPercent),
+    formatBytes(sample.systemDiskUsedBytes) + " of " + formatBytes(sample.systemDiskTotalBytes),
+    systemDiskPercent == null ? "var(--green)" : performanceColour("disk", systemDiskPercent));
+
+  const vmDiskAvailable = !!sample.vmDiskAvailable;
+  const vmDiskPercent = percentage(sample.vmDiskUsedBytes, sample.vmDiskTotalBytes, vmDiskAvailable);
+  setCard("perfVMDisk", vmDiskAvailable, vmDiskPercent == null ? "—" : vmDiskPercent.toFixed(1) + "%",
+    vmDiskPercent == null ? "Available" : statusText("disk", vmDiskPercent),
+    formatBytes(sample.vmDiskUsedBytes) + " of " + formatBytes(sample.vmDiskTotalBytes),
+    vmDiskPercent == null ? "var(--green)" : performanceColour("disk", vmDiskPercent));
+
+  const uptimeAvailable = !!sample.uptimeAvailable;
+  const uptimeSeconds = Number(sample.uptimeSeconds) || 0;
+  const uptimeDays = Math.floor(uptimeSeconds / 86400);
+  const uptimeHours = Math.floor((uptimeSeconds % 86400) / 3600);
+  const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const uptimeText = (uptimeDays ? uptimeDays + "d " : "") + (uptimeHours ? uptimeHours + "h " : "") + uptimeMinutes + "m";
+  setCard("perfUptime", uptimeAvailable, uptimeText, "Available", "Host operating time", "var(--green)");
+
+  const updatedAt = new Date(sample.timestamp || "");
+  const updatedAvailable = !Number.isNaN(updatedAt.getTime()) && !String(sample.timestamp || "").startsWith("0001");
+  setCard("perfUpdated", updatedAvailable,
+    updatedAvailable ? updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Unavailable",
+    "Current", updatedAvailable ? updatedAt.toLocaleDateString() : "", "var(--green)");
+
+  const timestamps = history.map(item => item.timestamp);
+  const cpuValues = history.map(item => item.cpuAvailable ? Number(item.cpuPercent) : null);
+  const memoryValues = history.map(item => percentage(item.memoryUsedBytes, item.memoryTotalBytes, item.memoryAvailable));
+  const pressureMarkers = history.map(item => item.pressureAvailable ? { colour: performanceColour("pressure", item.memoryPressure) } : null);
+  const systemDiskValues = history.map(item => percentage(item.systemDiskUsedBytes, item.systemDiskTotalBytes, item.systemDiskAvailable));
+  const vmDiskValues = history.map(item => percentage(item.vmDiskUsedBytes, item.vmDiskTotalBytes, item.vmDiskAvailable));
+  const readValues = history.map(item => item.diskIOAvailable ? Number(item.diskReadBytesPerSecond) : null);
+  const writeValues = history.map(item => item.diskIOAvailable ? Number(item.diskWriteBytesPerSecond) : null);
+
+  setChartStatus("cpuChartStatus", cpuAvailable, statusText("cpu", cpu), performanceColour("cpu", cpu));
+  setChartStatus("memoryChartStatus", pressureAvailable || memoryAvailable,
+    pressureAvailable ? statusText("pressure", pressure) : "Available",
+    pressureAvailable ? performanceColour("pressure", pressure) : "var(--green)");
+  const anyDiskAvailable = systemDiskAvailable || vmDiskAvailable;
+  const latestDiskPercent = Math.max(systemDiskPercent || 0, vmDiskPercent || 0);
+  setChartStatus("diskCapacityChartStatus", anyDiskAvailable,
+    anyDiskAvailable ? statusText("disk", latestDiskPercent) : "Unavailable", performanceColour("disk", latestDiskPercent));
+  setChartStatus("diskIOChartStatus", !!sample.diskIOAvailable, "Available", "var(--green)");
+  document.getElementById("diskIOCurrent").textContent = sample.diskIOAvailable
+    ? formatRate(sample.diskReadBytesPerSecond) + " read · " + formatRate(sample.diskWriteBytesPerSecond) + " write"
+    : "Unavailable";
+
+  drawLineChart(document.getElementById("cpuChart"), [{ values: cpuValues, colour: "--accent" }],
+    { min: 0, max: 100, timestamps, yFormatter: value => Math.round(value) + "%" });
+  drawLineChart(document.getElementById("memoryChart"), [{ values: memoryValues, colour: "--green" }],
+    { min: 0, max: 100, timestamps, markers: pressureMarkers, yFormatter: value => Math.round(value) + "%" });
+  drawLineChart(document.getElementById("diskCapacityChart"),
+    [{ values: systemDiskValues, colour: "--accent" }, { values: vmDiskValues, colour: "--amber" }],
+    { min: 0, max: 100, timestamps, yFormatter: value => Math.round(value) + "%" });
+  drawLineChart(document.getElementById("diskIOChart"),
+    [{ values: readValues, colour: "--accent" }, { values: writeValues, colour: "--amber" }],
+    { min: 0, timestamps, yFormatter: formatRate });
+}
+
+async function loadPerformance() {
+  if (performanceLoadInFlight) return;
+  performanceLoadInFlight = true;
+  try {
+    const response = await api("/api/performance");
+    if (!response.ok) throw new Error("request failed (" + response.status + ")");
+    renderPerformance(await response.json());
+  } catch (error) {
+    renderPerformance({ latest: {}, history: [] });
+    document.getElementById("perfUpdated").querySelector(".perf-detail").textContent = "Could not load metrics: " + error.message;
+  } finally {
+    performanceLoadInFlight = false;
+  }
+}
 
 // ---- config form ----
 let configLoaded = false;
@@ -803,6 +1136,7 @@ function render(state) {
   checkErrors(state.vms);
 
   if (activeTab === "logs") scheduleHistory();
+  if (activeTab === "performance") loadPerformance();
 }
 
 function renderTable(vms) {
@@ -1434,6 +1768,13 @@ document.getElementById("showRunningOnly").onchange = async (e) => {
   } catch (_) {}
 };
 document.getElementById("vmSearch").addEventListener("input", () => { if (latest) renderTable(latest.vms); });
+document.getElementById("perfRefreshBtn").onclick = loadPerformance;
+window.addEventListener("resize", () => {
+  clearTimeout(performanceResizeTimer);
+  performanceResizeTimer = setTimeout(() => {
+    if (activeTab === "performance" && latestPerformanceSnapshot) renderPerformance(latestPerformanceSnapshot);
+  }, 100);
+});
 
 connect();
 </script>
