@@ -49,4 +49,3 @@ Each metric group is collected independently. A failed CPU, memory, pressure, ca
 - Notifications, email, webhooks, and log-based alerts.
 - Per-process metrics or per-VM guest metrics.
 - A third-party JavaScript charting library.
-
