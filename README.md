@@ -6,8 +6,8 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's virtualization framework.
 
-Current release: **1.29**. See [CHANGELOG.md](CHANGELOG.md) for the complete
-Jamf preparation and VM boot-fix notes.
+Current release: **1.30**. See [CHANGELOG.md](CHANGELOG.md) for the complete
+performance-monitoring, Jamf preparation, and VM boot-fix notes.
 
 ## What it does
 
@@ -27,6 +27,9 @@ Jamf preparation and VM boot-fix notes.
 - **Jamf base preparation** — generate an enrollment profile from a saved Jamf
   Pro base URL and invitation ID, then copy and verify it on the Desktop of
   one running base VM over password-authenticated SFTP.
+- **Host performance monitoring** — inspect current native host CPU, memory,
+  kernel pressure, storage, disk I/O, and uptime alongside 24 hours of
+  in-memory charts.
 
 The intended workflow is to clone and start one clean base VM, copy the profile
 to its Desktop, stop it without enrolling it, and then clone that prepared base.
@@ -194,6 +197,9 @@ in API responses and are not included in profile-transfer logs.
   re-check against tart and clear any stuck statuses), the full fleet table
   (with search/filter), and per-VM actions. Last known IP / SSH status / Info
   are retained after a VM stops.
+- **Performance** — current host health cards and charts for the retained
+  performance samples. See [Performance](#performance) for what is measured
+  and how to interpret it.
 - **VM Management** — create/clone VMs (clone a template, or create from an IPSW
   path / "latest"; pick count, CPU, RAM, disk, display, random MAC/serial), edit
   an existing VM's settings (`tart set`), rename, and delete. Long create/clone
@@ -209,6 +215,41 @@ in API responses and are not included in profile-transfer logs.
 - **Logs** — Tart logs, Activity (create/clone task output), and Run history
   (searchable, 60-day retention by default).
 - **Helper Guide** — this README, rendered in-app.
+
+## Performance
+
+The **Performance** tab monitors the Tart Oven host, not guest VM resource
+usage. Tart Oven takes a native host sample at startup and then every 60
+seconds. The tab has cards for the latest sample and charts for the retained
+sample history.
+
+Each sample includes:
+
+- actual current host CPU utilization, replacing the former load-average CPU
+  display;
+- physical memory used and macOS kernel memory-pressure state;
+- capacity for the system disk (`/`) and the configured Tart VM-storage path;
+- aggregate host disk read and write throughput in bytes per second; and
+- host uptime and the sample timestamp.
+
+The history is memory-only: Tart Oven retains at most 1,440 one-minute samples
+(up to 24 hours). It is not written to `state.json`, so the performance history
+starts fresh whenever Tart Oven restarts.
+
+Cards and chart headers show **Unavailable** when the corresponding metric
+could not be collected in the latest sample. Other metrics in that sample can
+still be displayed; Tart Oven does not substitute an estimate for an
+unavailable value.
+
+Green, amber, and red labels are visual status cues only. CPU is amber above
+80% and red above 95%; system and VM storage are amber above 80% and red above
+90%; kernel pressure uses green for normal, amber for warning, and red for
+critical. These colours do not trigger alerts, notifications, scheduling, or
+VM actions.
+
+Performance data is collected in-process and displayed by the embedded
+dashboard. This feature needs no external runtime service, agent, dashboard
+asset, or shell-based host-stat command.
 
 ## Build
 
@@ -302,6 +343,7 @@ producing network traffic, and **Boot timeout** is long enough for that image.
 | POST | `/api/exec`   | `{name,command}` | SSH exec, returns stdout/stderr/exit |
 | GET  | `/api/info`   | `?name=` | SSH status command output |
 | GET  | `/api/history`| — | run history (newest first) + retention |
+| GET  | `/api/performance` | — | latest native host performance sample plus the retained in-memory history |
 | POST | `/api/vm/create` | createReq JSON | clone from template or create from IPSW (async tasks) |
 | POST | `/api/vm/set`    | `{name,cpu,memory,diskSize,display,randomMac,randomSerial}` | `tart set` (VM must be stopped) |
 | POST | `/api/vm/rename` | `{name,newName}` | `tart rename` (stopped) |

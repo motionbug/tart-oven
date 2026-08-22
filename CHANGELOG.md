@@ -1,8 +1,30 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.29 contains the
-Jamf base-image preparation work and VM boot reliability fixes developed on the
-Motionbug fork after the v1.27 baseline.
+This file records user-visible changes to Tart Oven. Version 1.30 adds native
+host performance monitoring. Version 1.29 contains the Jamf base-image
+preparation work and VM boot reliability fixes developed on the Motionbug fork
+after the v1.27 baseline.
+
+## 1.30 — 2026-08-22
+
+### Host performance monitoring
+
+- Added the **Performance** tab with current-value cards and retained charts
+  for actual host CPU utilization, physical memory use, macOS kernel memory
+  pressure, system-disk capacity, Tart VM-storage capacity, aggregate disk
+  read/write throughput, uptime, and the latest sample time.
+- Samples are taken at startup and then every 60 seconds. The in-memory history
+  holds at most 1,440 samples (up to 24 hours) and resets when Tart Oven
+  restarts; performance samples are not saved to `state.json`.
+- Added `GET /api/performance`, returning the latest sample and a copy of the
+  retained performance history for the dashboard.
+- Replaced the load-average CPU display with actual current CPU utilization.
+- Replaced shell-based host-stat collection with native in-process collection.
+  Performance monitoring requires no external runtime service, agent, or
+  dashboard asset.
+- Individual unavailable metrics are shown as **Unavailable** without hiding
+  independently collected metrics. Green, amber, and red status colours are
+  visual-only and do not trigger alerts, scheduling, or VM actions.
 
 ## 1.29 — 2026-08-21
 
