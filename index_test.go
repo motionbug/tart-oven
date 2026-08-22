@@ -15,9 +15,26 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 		`id="jamfBaseUrl"`, `id="jamfInvitationCode"`, `id="sshUser"`,
 		`id="sshPassword"`, `id="mdmTarget"`, `id="saveJamfBtn"`,
 		`id="copyMdmBtn"`, `/api/vm/mdm-profile`, `~/Desktop/mdm_enroll.mobileconfig`,
+		`placeholder="https://tenant.jamfcloud.com"`, `Enter the value after invitation=, not the full URL`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboard missing %q", want)
+		}
+	}
+}
+
+func TestDashboardExplainsPreparedBaseCloneWorkflow(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		"Do not install or enroll the base VM",
+		"Install the profile separately inside each clone",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing Jamf base workflow guidance %q", want)
 		}
 	}
 }

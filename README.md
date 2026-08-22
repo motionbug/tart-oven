@@ -25,17 +25,168 @@ Jamf preparation and VM boot-fix notes.
   status command, on demand only), and Screen (open macOS Screen Sharing).
 - **VM management** — this server detects Tart installations and can automatically install Tart when missing. It also lets you create/clone/edit/delete VMs.
 - **Jamf base preparation** — generate an enrollment profile from a saved Jamf
-  Pro base URL and invitation code, then copy and verify it on the Desktop of
+  Pro base URL and invitation ID, then copy and verify it on the Desktop of
   one running base VM over password-authenticated SFTP.
 
-To prepare a Jamf base image, start a base VM with Remote Login enabled, then
-open **VM Management → Prepare base VM for Jamf**. Save the Jamf and SSH
-settings, select the running base VM, and copy the verified profile to
-`~/Desktop/mdm_enroll.mobileconfig`. Install and configure that profile manually
-on the base VM, stop it when needed, then clone it with the existing VM controls.
-Tart Oven does not install the profile, stop the VM, or start cloning for you.
+The intended workflow is to clone and start one clean base VM, copy the profile
+to its Desktop, stop it without enrolling it, and then clone that prepared base.
+Each clone starts with the enrollment profile ready for the operator to install.
+See the complete workflow below.
 
 <img width="1617" height="934" alt="Screenshot 2026-06-09 at 11 54 44" src="https://github.com/user-attachments/assets/d6f0a95e-23e1-4d5a-a058-f93906290b62" />
+
+## Jamf base preparation
+
+### What this workflow does
+
+Tart Oven gives you a one-click way to generate a Jamf enrollment profile from
+saved settings, copy it to a running VM over SFTP, and verify the remote copy.
+It does **not** automate Jamf enrollment. macOS still requires an operator to
+open and approve the profile inside each VM.
+
+The prepared-base workflow is:
+
+```text
+Clone a clean base VM
+→ start it and confirm SSH access
+→ copy the profile to the base VM's Desktop
+→ stop the base VM without installing the profile
+→ clone the prepared base
+→ install and approve the profile separately inside each clone
+```
+
+### Before you begin
+
+You need:
+
+- Access to Jamf Pro with permission to create a computer enrollment invitation.
+- A reusable invitation ID. Select **Allow multiple uses** and choose an expiry
+  suitable for the lab. Jamf's invitation wizard may expect an email recipient
+  and SMTP configuration, but this workflow does not need to deliver or receive
+  the email. You can use a clearly fake recipient and, in a lab, non-delivering
+  SMTP settings, provided Jamf lets you complete the invitation.
+- Your Jamf Pro base URL, including `https://`, for example
+  `https://tenant.jamfcloud.com`. Do not enter `/enroll`, `/enroll/profile`, or
+  the complete invitation URL in the base-URL field.
+- A running macOS VM on Tart Oven's bridged network with **Remote Login** (SSH)
+  enabled and a known username and password.
+
+The published Cirrus Labs images use `admin` as both the username and password,
+and those credentials work for GUI and SSH access. A custom image may use
+different credentials or require you to enable **System Settings → General →
+Sharing → Remote Login** first. See the
+[Tart Quick Start](https://tart.run/quick-start/) for the current image list and
+SSH details.
+
+### 1. Clone a clean Cirrus base image
+
+Use a current Cirrus Labs base image. For example:
+
+```sh
+TART_HOME="/Users/Shared/Tart" \
+  tart clone ghcr.io/cirruslabs/macos-tahoe-base:latest jamf-base
+```
+
+Use the **VM storage path** configured in Tart Oven as `TART_HOME`; it may be an
+external volume instead of `/Users/Shared/Tart`. Tart downloads the remote image
+automatically when it is not already local. After cloning, click **Refresh VM
+status** in Tart Oven if `jamf-base` is not listed yet.
+
+You can substitute another current Cirrus image, including Sequoia, Sonoma, or
+an Xcode image. The [official Tart image instructions](https://tart.run/quick-start/#vm-images)
+list the available image names.
+
+### 2. Start the base and confirm SSH
+
+Start `jamf-base` from the Tart Oven Dashboard and wait until it shows as
+running with an IP address. Confirm the saved credentials can reach the VM:
+
+```sh
+ssh admin@<vm-ip>
+```
+
+For a stock Cirrus image, the password is `admin`. Tart Oven assumes that SSH is
+enabled; it cannot copy the profile if TCP port 22 is unavailable.
+
+### 3. Create the Jamf enrollment invitation
+
+In Jamf Pro:
+
+1. Open **Computers → Enrollment Invitations** and create a new invitation.
+2. Enter a dummy recipient, or your own address if you want the email. Email
+   delivery is not used by Tart Oven.
+3. Continue through the invitation message screen.
+4. Set the expiry and enable **Allow multiple uses** so the invitation can be
+   used by VMs cloned from the prepared base.
+5. Finish the wizard and copy the invitation ID.
+
+The traditional enrollment link looks like this:
+
+```text
+https://tenant.jamfcloud.com/enroll?invitation=INVITATION_ID
+```
+
+Enter only `INVITATION_ID` in Tart Oven—not the full URL. The
+[Motionbug Jamf invitation guide](https://motionbug.com/enrolling-your-vm-into-jamf-pro-2/)
+shows this Jamf Pro workflow with screenshots.
+
+### 4. Copy and verify the profile
+
+In **VM Management → Prepare base VM for Jamf**:
+
+1. Enter the Jamf Pro base URL, such as `https://tenant.jamfcloud.com`.
+2. Enter the invitation ID.
+3. Enter the base VM's SSH username and password. The defaults for Cirrus
+   images are `admin` / `admin`.
+4. Click **Save settings**. Password and invitation fields become blank after
+   saving; masked dots and “saved” indicate that Tart Oven retained the values.
+5. Select the running base VM.
+6. Click **Copy profile to Desktop** once.
+
+Tart Oven generates `mdm_enroll.mobileconfig`, uploads it to
+`~/Desktop/mdm_enroll.mobileconfig`, reads it back, and verifies both its exact
+contents and generated UUID. A successful message displays the VM, path, and
+UUID.
+
+### 5. Stop and clone the prepared base
+
+Do **not** install or enroll the base VM. The base is a reusable template whose
+Desktop contains the enrollment profile.
+
+1. Stop the base VM from the Dashboard.
+2. In **VM Management → Create VMs**, choose **Clone existing VM**.
+3. Select the prepared base, choose the number of VMs and their settings, and
+   create the clones.
+4. Start a clone and open `mdm_enroll.mobileconfig` from its Desktop.
+5. Complete the macOS profile approval flow and confirm that the clone appears
+   in Jamf Pro.
+
+Repeat the final two steps for each clone. Tart Oven gets the profile onto every
+VM with one copy to the base, but macOS/Jamf enrollment itself is not automated.
+
+### What Tart Oven automates
+
+| Tart Oven does | Operator still does |
+|---|---|
+| Save the base URL, invitation ID, and guest credentials | Create and manage the Jamf invitation |
+| Generate and validate the enrollment profile | Ensure SSH is enabled in the guest |
+| Copy the profile over embedded SSH/SFTP | Stop the prepared base and create clones |
+| Read back and verify the remote file | Open and approve the profile in each clone |
+
+### Troubleshooting
+
+| Message or symptom | Check |
+|---|---|
+| No VM appears in the selector | The selector intentionally lists running VMs only. Start the base and wait for an IP. |
+| `profile configuration is incomplete` | Save a base URL beginning with `https://`, the invitation ID, and SSH credentials. |
+| `could not resolve VM IP` | Confirm bridged networking is active and the Dashboard shows an IP. |
+| `SSH authentication failed` | Confirm Remote Login is enabled and test the same username/password with `ssh`. |
+| `SFTP upload failed` | Confirm SSH/SFTP access, Desktop availability, and that the guest user can write to its Desktop. |
+| `uploaded profile verification failed` | Retry once; Tart Oven rejected a remote file that did not exactly match the generated profile. |
+
+Jamf invitation IDs and SSH passwords are stored locally in
+`~/.tart-oven/state.json` with owner-only file permissions. They are write-only
+in API responses and are not included in profile-transfer logs.
 
 ## WebUI tabs
 
@@ -166,5 +317,5 @@ producing network traffic, and **Boot timeout** is long enough for that image.
 | GET  | `/events`     | — | SSE state stream |
 | GET  | `/`           | — | the dashboard |
 
-Jamf invitation codes and SSH passwords are write-only settings: they are saved
+Jamf invitation IDs and SSH passwords are write-only settings: they are saved
 for profile copying but are absent from API responses.

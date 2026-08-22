@@ -9,12 +9,12 @@ Motionbug fork after the v1.27 baseline.
 ### Jamf base-image preparation
 
 - Added **VM Management → Prepare base VM for Jamf**.
-- Added saved settings for the Jamf Pro base URL, invitation code, default SSH
+- Added saved settings for the Jamf Pro base URL, invitation ID, default SSH
   username, and default SSH password.
 - Added a target selector that shows running VMs only. The UI explains the
   intended workflow: prepare one running base image, install and configure its
   profile, stop it, and create later VMs by cloning that base.
-- Added password-field saved-state indicators. Invitation codes and passwords
+- Added password-field saved-state indicators. Invitation IDs and passwords
   are cleared from the input fields after saving, while masked dots indicate
   that a value is already stored.
 - Added global SSH credentials, defaulting to `admin` / `admin`. Existing
@@ -23,7 +23,7 @@ Motionbug fork after the v1.27 baseline.
 ### Profile generation and transfer
 
 - Added generation of `mdm_enroll.mobileconfig` using the saved Jamf base URL
-  and invitation code. The enrollment endpoint is
+  and invitation ID. The enrollment endpoint is
   `<jamf-base-url>/enroll/profile` and each profile receives a cryptographically
   random payload UUID.
 - Added structural validation of the generated plist before transfer,
@@ -46,7 +46,7 @@ Motionbug fork after the v1.27 baseline.
 
 ### Configuration and secret handling
 
-- Jamf invitation codes and SSH passwords are write-only in client-facing API
+- Jamf invitation IDs and SSH passwords are write-only in client-facing API
   responses and VM snapshots.
 - Blank password or invitation-code submissions preserve the previously saved
   value instead of erasing it.
@@ -93,10 +93,12 @@ Motionbug fork after the v1.27 baseline.
 ### Operational boundaries
 
 - Tart Oven copies the profile but does not install it inside the guest.
+- The intended base remains unenrolled: copy the profile to its Desktop, stop
+  it, and clone it so each new VM receives the file without inheriting an
+  already-enrolled device identity.
 - Tart Oven does not stop the prepared base VM or automatically create clones
   after the copy. Those remain explicit operator actions.
 - The guest must be running, reachable over bridged networking, and have Remote
   Login enabled before profile transfer.
 - SSH host keys are not persisted or pinned because the target machines are
   ephemeral and may be recreated with new host keys.
-

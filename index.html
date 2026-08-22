@@ -330,10 +330,10 @@
 
     <div class="panel">
       <h2>Prepare base VM for Jamf</h2>
-      <p class="muted">Prepare one running base VM by copying the Jamf enrollment profile to its Desktop. Install and configure the profile on that base VM, then clone the base so each cloned VM inherits the profile on its Desktop.</p>
+      <p class="muted">Prepare one running base VM by copying the Jamf enrollment profile to its Desktop. Do not install or enroll the base VM; stop it and clone it so every clone starts with the profile ready. Install the profile separately inside each clone.</p>
       <div class="grid">
-        <div class="field"><label>Jamf Pro base URL</label><input type="url" id="jamfBaseUrl" placeholder="https://company.jamfcloud.com"></div>
-        <div class="field"><label>Invitation code</label><input type="password" id="jamfInvitationCode" autocomplete="new-password"></div>
+        <div class="field"><label>Jamf Pro base URL</label><input type="url" id="jamfBaseUrl" placeholder="https://tenant.jamfcloud.com"></div>
+        <div class="field"><label>Invitation ID</label><input type="password" id="jamfInvitationCode" autocomplete="new-password"><small>Enter the value after invitation=, not the full URL</small></div>
         <div class="field"><label>Default SSH username</label><input type="text" id="sshUser" value="admin"><small>Per-VM credentials override this value</small></div>
         <div class="field"><label>Default SSH password</label><input type="password" id="sshPassword" autocomplete="new-password"></div>
       </div>
