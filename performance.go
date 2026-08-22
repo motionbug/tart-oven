@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"math"
+	"net/http"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -57,6 +59,44 @@ type performanceCollector struct {
 	previousDiskReadBytes        uint64
 	previousDiskWriteBytes       uint64
 	previousDiskCountersRecorded time.Time
+}
+
+func (m *Manager) updatePerformance(now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sample := m.performanceCollector.Collect(now, m.cfg.VMStoragePath)
+	m.performanceHistory = appendPerformanceSample(m.performanceHistory, sample)
+	m.hostStats = HostStats{
+		CPUPercent:  int(math.Round(sample.CPUPercent)),
+		MemUsedMB:   int64(sample.MemoryUsedBytes / (1 << 20)),
+		MemTotalMB:  int64(sample.MemoryTotalBytes / (1 << 20)),
+		DiskUsedGB:  int64(sample.VMDiskUsedBytes / (1 << 30)),
+		DiskTotalGB: int64(sample.VMDiskTotalBytes / (1 << 30)),
+		UpdatedAt:   sample.Timestamp,
+	}
+}
+
+func (m *Manager) performanceSnapshot() PerformanceSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	history := make([]PerformanceSample, len(m.performanceHistory))
+	copy(history, m.performanceHistory)
+	snapshot := PerformanceSnapshot{History: history}
+	if len(history) > 0 {
+		snapshot.Latest = history[len(history)-1]
+	}
+	return snapshot
+}
+
+func (m *Manager) handlePerformance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, m.performanceSnapshot())
 }
 
 func (c *performanceCollector) Collect(now time.Time, vmStoragePath string) PerformanceSample {

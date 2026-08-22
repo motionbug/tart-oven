@@ -2,9 +2,51 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestManagerUpdatePerformanceAppendsAndUpdatesHeader(t *testing.T) {
+	source := &fakePerformanceSource{cpu: 55.6, memoryUsed: 2 << 30, memoryTotal: 8 << 30, vmUsed: 20 << 30, vmTotal: 80 << 30}
+	m := &Manager{cfg: Config{VMStoragePath: "/vm"}, performanceCollector: &performanceCollector{source: source}}
+	m.updatePerformance(time.Unix(100, 0))
+	if len(m.performanceHistory) != 1 {
+		t.Fatalf("history = %d", len(m.performanceHistory))
+	}
+	if m.hostStats.CPUPercent != 56 || m.hostStats.MemUsedMB != 2048 || m.hostStats.DiskTotalGB != 80 {
+		t.Fatalf("header = %+v", m.hostStats)
+	}
+}
+
+func TestPerformanceSnapshotCopiesHistory(t *testing.T) {
+	m := &Manager{performanceHistory: []PerformanceSample{{UptimeSeconds: 1}}}
+	s := m.performanceSnapshot()
+	s.History[0].UptimeSeconds = 99
+	if m.performanceHistory[0].UptimeSeconds != 1 {
+		t.Fatal("history escaped Manager lock")
+	}
+}
+
+func TestPerformanceEndpointReturnsOnlyPerformancePayload(t *testing.T) {
+	m := &Manager{performanceHistory: []PerformanceSample{{CPUPercent: 12, CPUAvailable: true}}}
+	w := httptest.NewRecorder()
+	m.handlePerformance(w, httptest.NewRequest(http.MethodGet, "/api/performance", nil))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"vms"`) || !strings.Contains(w.Body.String(), `"history"`) {
+		t.Fatalf("response = %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPerformanceEndpointRejectsPost(t *testing.T) {
+	m := &Manager{}
+	w := httptest.NewRecorder()
+	m.handlePerformance(w, httptest.NewRequest(http.MethodPost, "/api/performance", nil))
+	if w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("response = %d Allow=%q", w.Code, w.Header().Get("Allow"))
+	}
+}
 
 func TestAppendPerformanceSampleKeepsNewest1440(t *testing.T) {
 	var history []PerformanceSample

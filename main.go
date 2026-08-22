@@ -29,7 +29,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -422,26 +421,28 @@ type HostStats struct {
 
 // Manager holds everything, guarded by mu.
 type Manager struct {
-	mu             sync.Mutex
-	cfg            Config
-	vms            map[string]*VM
-	history        []*RunEvent          // run log, pruned to cfg.HistoryDays
-	tasks          []*Task              // recent create/clone operations
-	logs           []string             // rolling tart command log (last ~200 lines)
-	hostStats      HostStats            // refreshed ~once a minute
-	hostIP         string               // local IP of the host Mac
-	tartVersion    string               // `tart --version`, refreshed periodically
-	lastSequential string               // last VM started in sequential scheduler mode
-	busy           map[string]bool      // VMs with an op in flight (start/stop)
-	opStart        map[string]time.Time // when each busy op started (to detect stuck ops)
-	runningCmds    map[string]*exec.Cmd // live `tart run` processes
-	subs           map[chan []byte]struct{}
-	storageMounted bool
-	tartJSON       bool // whether `tart list --format json` is supported
-	statePath      string
-	reload         chan struct{} // poke the scheduler when interval changes
-	mdmCopier      mdmProfileCopier
-	mdmResolveIP   mdmIPResolver
+	mu                   sync.Mutex
+	cfg                  Config
+	vms                  map[string]*VM
+	history              []*RunEvent // run log, pruned to cfg.HistoryDays
+	tasks                []*Task     // recent create/clone operations
+	logs                 []string    // rolling tart command log (last ~200 lines)
+	hostStats            HostStats   // refreshed ~once a minute
+	performanceCollector *performanceCollector
+	performanceHistory   []PerformanceSample
+	hostIP               string               // local IP of the host Mac
+	tartVersion          string               // `tart --version`, refreshed periodically
+	lastSequential       string               // last VM started in sequential scheduler mode
+	busy                 map[string]bool      // VMs with an op in flight (start/stop)
+	opStart              map[string]time.Time // when each busy op started (to detect stuck ops)
+	runningCmds          map[string]*exec.Cmd // live `tart run` processes
+	subs                 map[chan []byte]struct{}
+	storageMounted       bool
+	tartJSON             bool // whether `tart list --format json` is supported
+	statePath            string
+	reload               chan struct{} // poke the scheduler when interval changes
+	mdmCopier            mdmProfileCopier
+	mdmResolveIP         mdmIPResolver
 }
 
 // persisted is the on-disk shape of state.json.
@@ -1943,114 +1944,6 @@ func (m *Manager) isActive(name string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Host health stats (macOS: sysctl / vm_stat / df)
-// ---------------------------------------------------------------------------
-
-func sysctlInt(key string) int64 {
-	out, err := exec.Command("sysctl", "-n", key).Output()
-	if err != nil {
-		return 0
-	}
-	n, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-	return n
-}
-
-// loadAvg5 returns the 5-minute load average from vm.loadavg ("{ 1.2 1.3 1.4 }").
-func loadAvg5() float64 {
-	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
-	if err != nil {
-		return 0
-	}
-	f := strings.Fields(strings.Trim(strings.TrimSpace(string(out)), "{} "))
-	if len(f) >= 2 {
-		v, _ := strconv.ParseFloat(f[1], 64)
-		return v
-	}
-	return 0
-}
-
-// memUsedMB sums active + wired + compressed pages from vm_stat (≈ Activity
-// Monitor's "Memory Used").
-func memUsedMB(pageSize int64) int64 {
-	out, err := exec.Command("vm_stat").Output()
-	if err != nil {
-		return 0
-	}
-	val := func(line string) int64 {
-		i := strings.Index(line, ":")
-		if i < 0 {
-			return 0
-		}
-		s := strings.TrimSpace(line[i+1:])
-		s = strings.TrimSuffix(s, ".")
-		s = strings.ReplaceAll(s, ",", "")
-		n, _ := strconv.ParseInt(s, 10, 64)
-		return n
-	}
-	var active, wired, compressed int64
-	for _, line := range strings.Split(string(out), "\n") {
-		switch {
-		case strings.HasPrefix(line, "Pages active:"):
-			active = val(line)
-		case strings.HasPrefix(line, "Pages wired down:"):
-			wired = val(line)
-		case strings.HasPrefix(line, "Pages occupied by compressor:"):
-			compressed = val(line)
-		}
-	}
-	return (active + wired + compressed) * pageSize / 1024 / 1024
-}
-
-// diskUsage parses `df -k <path>` (1024-byte blocks) into used/total GB.
-func diskUsage(path string) (usedGB, totalGB int64) {
-	out, err := exec.Command("df", "-k", path).Output()
-	if err != nil {
-		return 0, 0
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) < 2 {
-		return 0, 0
-	}
-	f := strings.Fields(lines[len(lines)-1]) // Filesystem blocks Used Avail ...
-	if len(f) < 3 {
-		return 0, 0
-	}
-	total, _ := strconv.ParseInt(f[1], 10, 64)
-	used, _ := strconv.ParseInt(f[2], 10, 64)
-	return used / 1024 / 1024, total / 1024 / 1024
-}
-
-func (m *Manager) updateHostStats() {
-	ncpu := sysctlInt("hw.ncpu")
-	if ncpu < 1 {
-		ncpu = 1
-	}
-	cpu := int(loadAvg5()/float64(ncpu)*100 + 0.5)
-	totalMB := sysctlInt("hw.memsize") / 1024 / 1024
-	pageSize := sysctlInt("hw.pagesize")
-	if pageSize < 1 {
-		pageSize = 4096
-	}
-	usedMB := memUsedMB(pageSize)
-
-	m.mu.Lock()
-	path := m.cfg.VMStoragePath
-	m.mu.Unlock()
-	usedGB, totalGB := diskUsage(path)
-
-	m.mu.Lock()
-	m.hostStats = HostStats{
-		CPUPercent:  cpu,
-		MemUsedMB:   usedMB,
-		MemTotalMB:  totalMB,
-		DiskUsedGB:  usedGB,
-		DiskTotalGB: totalGB,
-		UpdatedAt:   time.Now(),
-	}
-	m.mu.Unlock()
-}
-
-// ---------------------------------------------------------------------------
 // Server self-control (restart / stop the tart-oven process itself)
 // ---------------------------------------------------------------------------
 
@@ -2396,6 +2289,7 @@ func (m *Manager) routes() *http.ServeMux {
 	mux.HandleFunc("/api/vms", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, m.snapshot())
 	})
+	mux.HandleFunc("/api/performance", m.handlePerformance)
 
 	mux.HandleFunc("/api/refresh", func(w http.ResponseWriter, r *http.Request) {
 		go m.forceRefresh()
@@ -2932,13 +2826,14 @@ func main() {
 	}
 
 	m := &Manager{
-		vms:         map[string]*VM{},
-		busy:        map[string]bool{},
-		opStart:     map[string]time.Time{},
-		runningCmds: map[string]*exec.Cmd{},
-		subs:        map[chan []byte]struct{}{},
-		statePath:   *stateFlag,
-		reload:      make(chan struct{}, 1),
+		vms:                  map[string]*VM{},
+		busy:                 map[string]bool{},
+		opStart:              map[string]time.Time{},
+		runningCmds:          map[string]*exec.Cmd{},
+		subs:                 map[chan []byte]struct{}{},
+		statePath:            *stateFlag,
+		reload:               make(chan struct{}, 1),
+		performanceCollector: &performanceCollector{source: systemPerformanceSource{}},
 	}
 	m.mdmCopier = newSFTPProfileCopier()
 	m.mdmResolveIP = m.resolveMDMIPWithTart
@@ -2956,7 +2851,7 @@ func main() {
 	m.checkStorage()
 	m.ensureSharedDir()
 	m.reconcile()
-	m.updateHostStats()
+	m.updatePerformance(time.Now())
 	m.hostIP = localIP()
 
 	go m.schedulerLoop()
@@ -2982,7 +2877,7 @@ func main() {
 		t := time.NewTicker(60 * time.Second)
 		defer t.Stop()
 		for range t.C {
-			m.updateHostStats()
+			m.updatePerformance(time.Now())
 			m.updateTartVersion()
 			m.hostIP = localIP()
 			m.broadcast()
