@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func sourceSection(t *testing.T, source, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(source, startMarker)
+	if start < 0 {
+		t.Fatalf("missing section start %q", startMarker)
+	}
+	end := strings.Index(source[start+len(startMarker):], endMarker)
+	if end < 0 {
+		t.Fatalf("missing section end %q after %q", endMarker, startMarker)
+	}
+	return source[start : start+len(startMarker)+end]
+}
+
 func TestDashboardContainsJamfProfileControls(t *testing.T) {
 	b, err := content.ReadFile("index.html")
 	if err != nil {
@@ -105,14 +118,27 @@ func TestPerformancePageUsesApprovedThresholds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	html := string(b)
-	for _, want := range []string{
-		`value > 95`, `value > 80`, `value > 90`,
-		`pressure === "critical"`, `pressure === "warning"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("missing threshold %q", want)
+	colourFunction := sourceSection(t, string(b), `function performanceColour`, `function drawLineChart`)
+	cpuBlock := sourceSection(t, colourFunction, `if (kind === "cpu")`, `if (kind === "disk")`)
+	diskBlock := sourceSection(t, colourFunction, `if (kind === "disk")`, `if (kind === "pressure")`)
+	pressureBlock := sourceSection(t, colourFunction, `if (kind === "pressure")`, `return "var(--green)"`)
+	for _, want := range []string{`value > 95`, `value > 80`} {
+		if !strings.Contains(cpuBlock, want) {
+			t.Errorf("CPU block missing threshold %q", want)
 		}
+	}
+	for _, want := range []string{`value > 90`, `value > 80`} {
+		if !strings.Contains(diskBlock, want) {
+			t.Errorf("disk block missing threshold %q", want)
+		}
+	}
+	for _, want := range []string{`pressure === "critical"`, `pressure === "warning"`} {
+		if !strings.Contains(pressureBlock, want) {
+			t.Errorf("pressure block missing threshold %q", want)
+		}
+	}
+	if strings.Contains(cpuBlock, `value > 90`) || strings.Contains(diskBlock, `value > 95`) {
+		t.Error("critical thresholds are associated with the wrong metric")
 	}
 }
 
@@ -122,12 +148,30 @@ func TestPerformanceHistoryLoadsOnlyWhileVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(b)
-	for _, want := range []string{
-		`if (id === "performance") loadPerformance();`,
-		`if (activeTab === "performance") loadPerformance();`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("missing guard %q", want)
+	showTab := sourceSection(t, html, `function showTab`, `// ---- performance ----`)
+	render := sourceSection(t, html, `function render(state)`, `function renderTable`)
+	for name, function := range map[string]string{"showTab": showTab, "render": render} {
+		if strings.Count(function, `loadPerformance();`) != 1 {
+			t.Errorf("%s must contain exactly one performance load", name)
+		}
+	}
+	if !strings.Contains(showTab, `if (id === "performance") loadPerformance();`) {
+		t.Error("showTab performance load is not scoped to opening Performance")
+	}
+	if !strings.Contains(render, `if (activeTab === "performance") loadPerformance();`) {
+		t.Error("SSE render performance load is not visibility guarded")
+	}
+}
+
+func TestPerformancePressureLegendNamesEveryState(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legend := sourceSection(t, string(b), `id="memoryPressureLegend"`, `</div>`)
+	for _, state := range []string{"Normal", "Warning", "Critical"} {
+		if !strings.Contains(legend, state) {
+			t.Errorf("memory-pressure legend missing %q", state)
 		}
 	}
 }

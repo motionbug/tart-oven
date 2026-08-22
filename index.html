@@ -106,6 +106,13 @@
   .perf-key { display: inline-flex; align-items: center; gap: 6px; }
   .perf-key::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--key-colour); }
   .perf-key.pressure::before { width: 11px; height: 3px; border-radius: 2px; }
+  .perf-pressure-legend, .perf-pressure-key { display: inline-flex; align-items: center; gap: 7px; }
+  .perf-pressure-legend { flex-wrap: wrap; }
+  .perf-pressure-key { gap: 3px; }
+  .perf-pressure-key.normal { color: var(--green); }
+  .perf-pressure-key.warning { color: var(--amber); }
+  .perf-pressure-key.critical { color: var(--red); }
+  .perf-pressure-symbol { width: 10px; text-align: center; line-height: 1; }
   .perf-chart canvas { display: block; width: 100%; height: 170px; }
   @media (max-width: 760px) {
     .performance-cards, .performance-grid { grid-template-columns: 1fr; }
@@ -371,7 +378,7 @@
       </article>
       <article class="panel perf-chart">
         <div class="perf-chart-head"><h2>Memory &amp; pressure</h2><span id="memoryChartStatus" class="perf-chart-status">Unavailable</span></div>
-        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--green)">Memory used %</span><span class="perf-key pressure" style="--key-colour:var(--amber)">Pressure state</span></div>
+        <div class="perf-legend"><span class="perf-key" style="--key-colour:var(--green)">Memory used %</span><span id="memoryPressureLegend" class="perf-pressure-legend"><span class="perf-pressure-key normal"><span class="perf-pressure-symbol" aria-hidden="true">●</span>Normal</span><span class="perf-pressure-key warning"><span class="perf-pressure-symbol" aria-hidden="true">▲</span>Warning</span><span class="perf-pressure-key critical"><span class="perf-pressure-symbol" aria-hidden="true">■</span>Critical</span></span></div>
         <canvas id="memoryChart" role="img" aria-label="Memory use and pressure over the retained history"></canvas>
       </article>
       <article class="panel perf-chart">
@@ -599,6 +606,7 @@
 function setTheme(light) {
   document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
   try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+  if (latestPerformanceSnapshot) renderPerformance(latestPerformanceSnapshot);
 }
 function getTheme() {
   try { return localStorage.getItem("theme"); } catch (e) { return null; }
@@ -725,7 +733,8 @@ function drawLineChart(canvas, series, options) {
   ctx.fillText(yLabel(minimum), left - 6, top + plotHeight);
 
   usableSeries.forEach(item => {
-    ctx.strokeStyle = resolveColour(item.colour);
+    const colour = resolveColour(item.colour);
+    ctx.strokeStyle = colour;
     ctx.lineWidth = item.width || 2;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -738,14 +747,36 @@ function drawLineChart(canvas, series, options) {
       open = true;
     });
     ctx.stroke();
+    item.values.forEach((value, index) => {
+      if (!Number.isFinite(value)) return;
+      const hasPrevious = index > 0 && Number.isFinite(item.values[index - 1]);
+      const hasNext = index + 1 < item.values.length && Number.isFinite(item.values[index + 1]);
+      if (hasPrevious || hasNext) return;
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      ctx.arc(xAt(index), yAt(value), Math.max(item.width || 2, 2.5), 0, Math.PI * 2);
+      ctx.fill();
+    });
   });
 
   markers.forEach((marker, index) => {
     if (!marker) return;
     ctx.fillStyle = resolveColour(marker.colour);
-    ctx.beginPath();
-    ctx.arc(xAt(index), top + 5, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+    const x = xAt(index), y = top + 6;
+    if (marker.state === "critical") {
+      ctx.fillRect(x - 3, y - 3, 6, 6);
+    } else if (marker.state === "warning") {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x + 4, y + 3);
+      ctx.lineTo(x - 4, y + 3);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
 
   if (!usableSeries.length && !hasMarkers) {
@@ -839,7 +870,9 @@ function renderPerformance(snapshot) {
   const timestamps = history.map(item => item.timestamp);
   const cpuValues = history.map(item => item.cpuAvailable ? Number(item.cpuPercent) : null);
   const memoryValues = history.map(item => percentage(item.memoryUsedBytes, item.memoryTotalBytes, item.memoryAvailable));
-  const pressureMarkers = history.map(item => item.pressureAvailable ? { colour: performanceColour("pressure", item.memoryPressure) } : null);
+  const pressureMarkers = history.map(item => item.pressureAvailable
+    ? { state: item.memoryPressure, colour: performanceColour("pressure", item.memoryPressure) }
+    : null);
   const systemDiskValues = history.map(item => percentage(item.systemDiskUsedBytes, item.systemDiskTotalBytes, item.systemDiskAvailable));
   const vmDiskValues = history.map(item => percentage(item.vmDiskUsedBytes, item.vmDiskTotalBytes, item.vmDiskAvailable));
   const readValues = history.map(item => item.diskIOAvailable ? Number(item.diskReadBytesPerSecond) : null);
