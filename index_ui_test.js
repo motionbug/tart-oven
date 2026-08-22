@@ -35,6 +35,13 @@ function evaluateFunction(name, globals) {
   return context.testFunction;
 }
 
+function evaluateFunctions(names, exportedName, globals) {
+  const context = vm.createContext(Object.assign({}, globals));
+  const definitions = names.map(extractFunction).join("\n");
+  vm.runInContext(definitions + "; globalThis.testFunction = " + exportedName + ";", context);
+  return context.testFunction;
+}
+
 function chartFixture() {
   const calls = [];
   const context = {};
@@ -112,5 +119,29 @@ test("performanceColour keeps thresholds associated with their metric", () => {
     ["pressure", "critical", "var(--red)"],
   ]) {
     assert.equal(performanceColour(kind, value), expected, kind + " at " + value);
+  }
+});
+
+test("compact header keeps CPU and disk thresholds metric-specific while preserving RAM", () => {
+  const elements = new Map();
+  const setHeaderStat = evaluateFunctions(["headerStatColour", "setHeaderStat"], "setHeaderStat", {
+    document: {
+      getElementById(id) {
+        if (!elements.has(id)) elements.set(id, { textContent: "", style: {} });
+        return elements.get(id);
+      },
+    },
+  });
+
+  for (const [id, ratio, expected] of [
+    ["statCpu", 0.80, "var(--text)"], ["statCpu", 0.81, "var(--amber)"],
+    ["statCpu", 0.95, "var(--amber)"], ["statCpu", 0.96, "var(--red)"],
+    ["statDisk", 0.80, "var(--text)"], ["statDisk", 0.81, "var(--amber)"],
+    ["statDisk", 0.90, "var(--amber)"], ["statDisk", 0.91, "var(--red)"],
+    ["statRam", 0.74, "var(--text)"], ["statRam", 0.75, "var(--amber)"],
+    ["statRam", 0.90, "var(--red)"],
+  ]) {
+    setHeaderStat(id, "value", ratio);
+    assert.equal(elements.get(id).style.color, expected, id + " at " + ratio);
   }
 });

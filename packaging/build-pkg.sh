@@ -15,6 +15,9 @@
 # and its postinstall loads the agent and opens http://127.0.0.1:9000.
 set -euo pipefail
 
+# Do not copy resource forks or extended attributes while assembling archives.
+export COPYFILE_DISABLE=1
+
 cd "$(dirname "$0")/.."   # repo root
 REPO="$(pwd)"
 
@@ -50,7 +53,7 @@ fi
 echo ""
 echo "==> Building tart-oven ${VERSION} (arm64)…"
 BUILD="$(mktemp -d)"
-GOOS=darwin GOARCH=arm64 go build -o "$BUILD/tart-oven" .
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -trimpath -buildvcs=false -o "$BUILD/tart-oven" .
 
 # Sign the binary with hardened runtime if signing is enabled
 if [ "$DO_SIGN" = true ]; then
@@ -71,6 +74,27 @@ install -m 644 packaging/com.tartoven.agent.plist "$ROOT/Library/LaunchAgents/$L
 # (the repo lives on synced storage that adds xattrs).
 xattr -rc "$ROOT" 2>/dev/null || true
 
+# Some managed/synced environments attach protected attributes that xattr cannot
+# remove. Re-stage through an xattr-free UDF view so pkgbuild cannot serialize
+# those attributes as ._ AppleDouble payload files.
+PKG_ROOT="$ROOT"
+PAYLOAD_MOUNT=""
+cleanup_payload_mount() {
+    if [ -n "$PAYLOAD_MOUNT" ]; then
+        hdiutil detach -quiet "$PAYLOAD_MOUNT" 2>/dev/null || true
+    fi
+}
+trap cleanup_payload_mount EXIT
+if [ -n "$(xattr -lr "$ROOT" 2>/dev/null)" ]; then
+    echo "==> Re-staging payload without extended attributes…"
+    PAYLOAD_IMAGE="$BUILD/payload.iso"
+    PAYLOAD_MOUNT="$BUILD/payload-root"
+    mkdir -p "$PAYLOAD_MOUNT"
+    hdiutil makehybrid -quiet -o "$PAYLOAD_IMAGE" "$ROOT" -udf -udf-volume-name TARTOVEN_PAYLOAD
+    hdiutil attach -quiet -nobrowse -mountpoint "$PAYLOAD_MOUNT" "$PAYLOAD_IMAGE"
+    PKG_ROOT="$PAYLOAD_MOUNT"
+fi
+
 chmod +x packaging/scripts/postinstall
 
 echo "==> Running pkgbuild…"
@@ -81,13 +105,33 @@ if [ "$DO_SIGN" = true ]; then
 fi
 
 pkgbuild \
-    --root "$ROOT" \
+    --root "$PKG_ROOT" \
     --identifier "$PKG_ID" \
     --version "$VERSION" \
     --scripts "$REPO/packaging/scripts" \
     --install-location "/" \
     ${PKG_SIGN_ARGS[@]+"${PKG_SIGN_ARGS[@]}"} \
     "$OUT"
+
+PAYLOAD_FILES=$(pkgutil --payload-files "$OUT")
+if printf '%s\n' "$PAYLOAD_FILES" | grep -Eq '(^|/)\._'; then
+    echo "error: package payload contains AppleDouble entries:" >&2
+    printf '%s\n' "$PAYLOAD_FILES" | grep -E '(^|/)\._' >&2
+    exit 1
+fi
+for REQUIRED_FILE in \
+    "./Library/Application Support/Tart Oven/tart-oven" \
+    "./Library/LaunchAgents/$LABEL.plist"; do
+    if ! printf '%s\n' "$PAYLOAD_FILES" | grep -Fqx "$REQUIRED_FILE"; then
+        echo "error: package payload is missing $REQUIRED_FILE" >&2
+        exit 1
+    fi
+done
+
+if [ -n "$PAYLOAD_MOUNT" ]; then
+    hdiutil detach -quiet "$PAYLOAD_MOUNT"
+    PAYLOAD_MOUNT=""
+fi
 
 echo "==> PKG built: $REPO/$OUT"
 

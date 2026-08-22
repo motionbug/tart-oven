@@ -1110,6 +1110,22 @@ function checkErrors(vms) {
 }
 
 // ---- render (live) ----
+function headerStatColour(id, ratio) {
+  if (id === "statCpu") {
+    return ratio > 0.95 ? "var(--red)" : (ratio > 0.80 ? "var(--amber)" : "var(--text)");
+  }
+  if (id === "statDisk") {
+    return ratio > 0.90 ? "var(--red)" : (ratio > 0.80 ? "var(--amber)" : "var(--text)");
+  }
+  return ratio >= 0.90 ? "var(--red)" : (ratio >= 0.75 ? "var(--amber)" : "var(--text)");
+}
+
+function setHeaderStat(id, text, ratio) {
+  const element = document.getElementById(id);
+  element.textContent = text;
+  element.style.color = headerStatColour(id, ratio);
+}
+
 function render(state) {
   latest = state;
   clockSkew = new Date(state.now).getTime() - Date.now();
@@ -1119,15 +1135,10 @@ function render(state) {
 
   // host health stats (refreshed server-side ~once a minute)
   const hs = state.hostStats || {};
-  const setStat = (id, text, ratio) => {
-    const el = document.getElementById(id);
-    el.textContent = text;
-    el.style.color = ratio >= 0.9 ? "var(--red)" : (ratio >= 0.75 ? "var(--amber)" : "var(--text)");
-  };
   if (hs.updatedAt && !hs.updatedAt.startsWith("0001")) {
-    setStat("statCpu", (hs.cpuPercent || 0) + "%", (hs.cpuPercent || 0) / 100);
-    setStat("statRam", (hs.memUsedMB || 0) + "/" + (hs.memTotalMB || 0) + " MB", hs.memTotalMB ? hs.memUsedMB / hs.memTotalMB : 0);
-    setStat("statDisk", (hs.diskUsedGB || 0) + "/" + (hs.diskTotalGB || 0) + " GB", hs.diskTotalGB ? hs.diskUsedGB / hs.diskTotalGB : 0);
+    setHeaderStat("statCpu", (hs.cpuPercent || 0) + "%", (hs.cpuPercent || 0) / 100);
+    setHeaderStat("statRam", (hs.memUsedMB || 0) + "/" + (hs.memTotalMB || 0) + " MB", hs.memTotalMB ? hs.memUsedMB / hs.memTotalMB : 0);
+    setHeaderStat("statDisk", (hs.diskUsedGB || 0) + "/" + (hs.diskTotalGB || 0) + " GB", hs.diskTotalGB ? hs.diskUsedGB / hs.diskTotalGB : 0);
   }
 
   document.getElementById("tartBanner").style.display = state.tartInstalled ? "none" : "flex";

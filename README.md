@@ -263,6 +263,21 @@ go build -o tart-oven
 That produces one static binary, `tart-oven`. State and configuration lives in
 `~/.tart-oven/state.json` (created on first run).
 
+Before producing a release binary or package, run the complete Go and embedded
+dashboard verification workflow:
+
+```sh
+gofmt -w *.go
+go vet ./...
+go test ./... -count=1
+go test -race ./... -count=1
+sed -n '/^<script>$/,/^<\/script>$/p' index.html | sed '1d;$d' | node --check
+node --test index_ui_test.js
+```
+
+The syntax command checks the entire JavaScript block embedded in `index.html`;
+the Node test command exercises the dashboard's dependency-free UI helpers.
+
 ## First Run (Manual mode)
 
 ```sh

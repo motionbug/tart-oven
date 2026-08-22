@@ -127,6 +127,96 @@ func TestPerformanceCollectorCalculatesDiskRatesAndCounterReset(t *testing.T) {
 	}
 }
 
+func TestClampCPUPercent(t *testing.T) {
+	tests := []struct {
+		name    string
+		percent float64
+		want    float64
+	}{
+		{name: "below zero", percent: -0.1, want: 0},
+		{name: "zero", percent: 0, want: 0},
+		{name: "within range", percent: 42.5, want: 42.5},
+		{name: "one hundred", percent: 100, want: 100},
+		{name: "above one hundred", percent: 100.1, want: 100},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := clampCPUPercent(test.percent); got != test.want {
+				t.Fatalf("clampCPUPercent(%v) = %v, want %v", test.percent, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPerformanceCollectorTreatsNonPositiveElapsedTimeAsZeroRate(t *testing.T) {
+	tests := []struct {
+		name       string
+		secondTime time.Time
+	}{
+		{name: "same timestamp", secondTime: time.Unix(100, 0)},
+		{name: "timestamp moved backwards", secondTime: time.Unix(99, 0)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := &fakePerformanceSource{reads: 1000, writes: 2000}
+			collector := performanceCollector{source: source}
+			collector.Collect(time.Unix(100, 0), "/vm")
+			source.reads, source.writes = 7000, 5000
+
+			sample := collector.Collect(test.secondTime, "/vm")
+			if !sample.DiskIOAvailable {
+				t.Fatal("disk I/O marked unavailable")
+			}
+			if sample.DiskReadBytesPerSecond != 0 || sample.DiskWriteBytesPerSecond != 0 {
+				t.Fatalf("rates = %v/%v, want 0/0", sample.DiskReadBytesPerSecond, sample.DiskWriteBytesPerSecond)
+			}
+		})
+	}
+}
+
+func TestPerformanceCollectorMarksOnlyFailedGroupUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		fail func(*fakePerformanceSource)
+	}{
+		{name: "cpu", fail: func(source *fakePerformanceSource) { source.cpuErr = errors.New("cpu unavailable") }},
+		{name: "memory", fail: func(source *fakePerformanceSource) { source.memoryErr = errors.New("memory unavailable") }},
+		{name: "pressure", fail: func(source *fakePerformanceSource) { source.pressureErr = errors.New("pressure unavailable") }},
+		{name: "system disk", fail: func(source *fakePerformanceSource) { source.systemDiskErr = errors.New("system disk unavailable") }},
+		{name: "vm disk", fail: func(source *fakePerformanceSource) { source.vmDiskErr = errors.New("vm disk unavailable") }},
+		{name: "disk io", fail: func(source *fakePerformanceSource) { source.ioErr = errors.New("disk io unavailable") }},
+		{name: "uptime", fail: func(source *fakePerformanceSource) { source.uptimeErr = errors.New("uptime unavailable") }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := &fakePerformanceSource{
+				cpu: 25, memoryUsed: 6 << 30, memoryTotal: 16 << 30, pressure: 1,
+				systemUsed: 50 << 30, systemTotal: 100 << 30,
+				vmUsed: 300 << 30, vmTotal: 500 << 30,
+				reads: 1000, writes: 2000, uptime: 3600,
+			}
+			test.fail(source)
+
+			sample := (&performanceCollector{source: source}).Collect(time.Unix(100, 0), "/vm")
+			availability := map[string]bool{
+				"cpu": sample.CPUAvailable, "memory": sample.MemoryAvailable,
+				"pressure": sample.PressureAvailable, "system disk": sample.SystemDiskAvailable,
+				"vm disk": sample.VMDiskAvailable, "disk io": sample.DiskIOAvailable,
+				"uptime": sample.UptimeAvailable,
+			}
+			for group, got := range availability {
+				want := group != test.name
+				if got != want {
+					t.Errorf("%s availability = %t, want %t when %s fails", group, got, want, test.name)
+				}
+			}
+		})
+	}
+}
+
 func TestPerformanceCollectorKeepsCPUWhenMemoryFails(t *testing.T) {
 	source := &fakePerformanceSource{cpu: 25, memoryErr: errors.New("unavailable"), uptime: 99}
 	s := (&performanceCollector{source: source}).Collect(time.Unix(100, 0), "/vm")

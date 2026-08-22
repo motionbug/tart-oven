@@ -2819,7 +2819,12 @@ func main() {
 
 	listenFlag := flag.String("listen", "", "host:port to bind (overrides config)")
 	stateFlag := flag.String("state", defaultState, "path to state.json")
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
 
 	if err := os.MkdirAll(filepath.Dir(*stateFlag), 0o755); err != nil {
 		log.Fatalf("cannot create state dir: %v", err)

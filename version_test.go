@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -27,15 +27,12 @@ func TestReleaseVersion130IsConsistent(t *testing.T) {
 	}
 }
 
-func TestReleaseBinaryEmbedsVersion130(t *testing.T) {
-	binary, err := os.ReadFile("tart-oven")
+func TestReleaseBinaryReportsVersion130(t *testing.T) {
+	output, err := exec.Command("./tart-oven", "-version").CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("run tracked executable: %v\n%s", err, output)
 	}
-	if !bytes.Contains(binary, []byte("1.30")) {
-		t.Fatal("tracked executable does not embed release version 1.30")
-	}
-	if bytes.Contains(binary, []byte("1.28")) {
-		t.Fatal("tracked executable still embeds stale release version 1.28")
+	if got, want := string(output), "1.30\n"; got != want {
+		t.Fatalf("tracked executable version output = %q, want %q", got, want)
 	}
 }
