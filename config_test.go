@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +97,42 @@ func TestHandleConfigBlankSecrets(t *testing.T) {
 	}
 	if m.cfg.JamfBaseURL != "https://new.example" {
 		t.Fatalf("JamfBaseURL = %q, want normalized URL", m.cfg.JamfBaseURL)
+	}
+}
+
+func TestHandleConfigPreservesOCIExclusionWhenFieldIsOmitted(t *testing.T) {
+	m := newTestManager(t)
+	m.cfg.ExcludeOCIFromScheduler = true
+	req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(`{"listen":"127.0.0.1:9000","intervalMinutes":5,"windowMinutes":120,"maxConcurrent":1}`))
+	res := httptest.NewRecorder()
+
+	m.handleConfig(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if !m.cfg.ExcludeOCIFromScheduler {
+		t.Fatal("an older client omitting excludeOciFromScheduler disabled the safe default")
+	}
+}
+
+func TestHandleConfigAppliesExplicitOCIExclusionValues(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		t.Run(strings.ToUpper(strconv.FormatBool(want)), func(t *testing.T) {
+			m := newTestManager(t)
+			m.cfg.ExcludeOCIFromScheduler = !want
+			body := fmt.Sprintf(`{"listen":"127.0.0.1:9000","intervalMinutes":5,"windowMinutes":120,"maxConcurrent":1,"excludeOciFromScheduler":%t}`, want)
+			req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body))
+			res := httptest.NewRecorder()
+
+			m.handleConfig(res, req)
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+			}
+			if m.cfg.ExcludeOCIFromScheduler != want {
+				t.Fatalf("ExcludeOCIFromScheduler = %v, want %v", m.cfg.ExcludeOCIFromScheduler, want)
+			}
+		})
 	}
 }

@@ -6,16 +6,17 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's virtualization framework.
 
-Current release: **1.31**. See [CHANGELOG.md](CHANGELOG.md) for the complete
-memory-safeguard, performance-monitoring, Jamf preparation, and VM boot-fix
-notes.
+Current release: **1.32**. See [CHANGELOG.md](CHANGELOG.md) for the complete
+OCI-image separation, memory-safeguard, performance-monitoring, Jamf
+preparation, and VM boot-fix notes.
 
 ## What it does
 
 - **Scheduler** — Run VMs for a set window following an interval and daily
   working hours. Outside the daily hours the scheduler stops all running VMs and
   starts none. The **Selection mode** is either *random* or *sequential* (cycles
-  through the eligible VMs in alphabetical order).
+  through the eligible VMs in alphabetical order). Cached OCI images are
+  excluded by default so the scheduler runs cloned local VMs, not source images.
 - **SSH status & Info** — on start, after getting an IP, tart-oven runs the
   status command (Get info) over SSH: a green/red bubble shows reachability and
   the **Info** column shows the (multi-line) output. Clicking **Get info**
@@ -26,6 +27,9 @@ notes.
   command (SSH), Get info (SSH status command, on demand only), and Screen
   (open macOS Screen Sharing).
 - **VM management** — this server detects Tart installations and can automatically install Tart when missing. It also lets you create/clone/edit/delete VMs.
+- **Local/OCI separation** — the Dashboard lists runnable local VMs separately
+  from cached OCI registry images and carries Tart's source and storage metadata
+  through the API. OCI rows provide a focused Clone action.
 - **Jamf base preparation** — generate an enrollment profile from a saved Jamf
   Pro base URL and invitation ID, then copy and verify it on the Desktop of
   one running base VM over password-authenticated SFTP.
@@ -41,6 +45,32 @@ The intended workflow is to clone and start one clean base VM, copy the profile
 to its Desktop, stop it without enrolling it, and then clone that prepared base.
 Each clone starts with the enrollment profile ready for the operator to install.
 See the complete workflow below.
+
+## Local VMs and OCI images
+
+Tart's VM list contains two different kinds of entries:
+
+- **Local VMs** are independent machines in the configured `TART_HOME`. Tart
+  Oven can run, stop, suspend, inspect, edit, and delete these VMs.
+- **OCI Images** are cached registry sources such as
+  `ghcr.io/cirruslabs/macos-tahoe-base:latest` or a digest-pinned reference.
+  Tart Oven displays the full image location, cached size, virtual-disk size,
+  and last-accessed value. Their only Dashboard action is **Clone**.
+
+Clicking **Clone** on an OCI image opens **VM Management**, switches the form to
+clone mode, and selects the exact tag or digest shown by Tart. Complete the
+name and hardware fields there to create a local VM. After cloning, Tart reports
+the new VM as `local`; Tart's list output does not retain which OCI reference
+the local clone originally came from, so Tart Oven does not invent provenance.
+
+**Configuration → VM Scheduler → Exclude OCI images from scheduler** is enabled
+by default on fresh installs and upgrades. Keep it enabled when OCI entries are
+base images used only for cloning. Turning it off intentionally makes stopped
+OCI entries eligible for automatic selection if the installed Tart version can
+run them. The per-name exclusion list and template-name rule still apply.
+
+Search filters both Dashboard sections. **Show running only** shows only active
+local VMs and hides the OCI section because cached images are not running VMs.
 
 <img width="1617" height="934" alt="Screenshot 2026-06-09 at 11 54 44" src="https://github.com/user-attachments/assets/d6f0a95e-23e1-4d5a-a058-f93906290b62" />
 
@@ -200,9 +230,9 @@ in API responses and are not included in profile-transfer logs.
 ## WebUI tabs
 
 - **Dashboard** — scheduler ON/OFF, a **Refresh VM status** button (force a
-  re-check against tart and clear any stuck statuses), the full fleet table
-  (with search/filter), and per-VM actions. Last known IP / SSH status / Info
-  are retained after a VM stops.
+  re-check against tart and clear any stuck statuses), separate Local VMs and
+  OCI Images tables with shared search/filter controls, and per-local-VM
+  actions. Last known IP / SSH status / Info are retained after a VM stops.
 - **Performance** — current host health cards and charts for the retained
   performance samples. See [Performance](#performance) for what is measured
   and how to interpret it.
@@ -423,22 +453,24 @@ or install it with:
 sudo installer -pkg TartOven-<version>.pkg -target /
 ```
 
-### Upgrade to 1.31
+### Upgrade to 1.32
 
-Installing `TartOven-1.31.pkg` replaces the Tart Oven binary and reloads its
+Installing `TartOven-1.32.pkg` replaces the Tart Oven binary and reloads its
 LaunchAgent. The existing `~/.tart-oven/state.json`, VM storage, Jamf settings,
 and saved VM metadata are retained. The locally produced test package is
 unsigned, so install it from Terminal or distribute it through your management
 system:
 
 ```sh
-sudo installer -pkg TartOven-1.31.pkg -target /
+sudo installer -pkg TartOven-1.32.pkg -target /
 ```
 
 After installation, open `http://127.0.0.1:9000` and confirm the header reports
-`v1.31`. Add `--suspendable` to Custom run arguments only if you intend to use
-the new Suspend action; it is not required for performance monitoring,
-critical-pressure deferral, Graceful shutdown, or the existing Stop action.
+`v1.32`. Existing state files automatically receive the safe default that
+excludes OCI images from scheduling. You can review or change it under
+**Configuration → VM Scheduler**. Add `--suspendable` to Custom run arguments
+only if you intend to use Suspend; it is not required for OCI separation,
+performance monitoring, critical-pressure deferral, Graceful shutdown, or Stop.
 
 Signing (only needed for double-click installs outside Jamf — Jamf installs as
 root and bypasses Gatekeeper):
@@ -485,7 +517,7 @@ producing network traffic, and **Boot timeout** is long enough for that image.
 
 | Method | Path | Body / query | Purpose |
 |---|---|---|---|
-| GET  | `/api/vms`    | — | full state (VMs + config + storage) |
+| GET  | `/api/vms`    | — | full state; each VM includes Tart `source`, `disk`, `size`, and `accessed` metadata |
 | POST | `/api/run`    | `{name}` | run a VM now |
 | POST | `/api/stop`   | `{name}` | stop a VM now |
 | POST | `/api/suspend` | `{name}` | suspend an eligible running VM without Stop fallback |
@@ -512,3 +544,8 @@ producing network traffic, and **Boot timeout** is long enough for that image.
 
 Jamf invitation IDs and SSH passwords are write-only settings: they are saved
 for profile copying but are absent from API responses.
+
+The Config JSON field `excludeOciFromScheduler` controls global OCI scheduler
+eligibility and defaults to `true`. Unknown or missing VM sources are treated as
+local for compatibility; only a case-insensitive Tart source value of `OCI` is
+classified as an OCI image.

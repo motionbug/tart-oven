@@ -145,3 +145,100 @@ test("compact header keeps CPU and disk thresholds metric-specific while preserv
     assert.equal(elements.get(id).style.color, expected, id + " at " + ratio);
   }
 });
+
+test("renderOCIImages hides cached images for running-only and renders clone-only rows", () => {
+  const panel = { classList: { toggle(name, enabled) { panel.hidden = name === "hidden" && enabled; } } };
+  const buttons = [];
+  const rows = { innerHTML: "", querySelectorAll: () => buttons };
+  const renderOCIImages = evaluateFunction("renderOCIImages", {
+    document: { getElementById: id => id === "ociPanel" ? panel : rows },
+    esc: value => String(value),
+    fmtAgo: () => "1h ago",
+  });
+  const images = [{
+    source: "OCI", name: "ghcr.io/example/base@sha256:abc", size: 22, disk: 80,
+    accessed: "2026-08-23T12:00:00Z",
+  }];
+
+  renderOCIImages(images, false, "sha256");
+  assert.match(rows.innerHTML, /ghcr\.io\/example\/base@sha256:abc/);
+  assert.match(rows.innerHTML, />Clone<\/button>/);
+  assert.doesNotMatch(rows.innerHTML, /<button[^>]+onclick=/);
+  for (const forbidden of [">Run</button>", ">Stop</button>", ">Edit</button>", ">Screen</button>"]) {
+    assert.doesNotMatch(rows.innerHTML, new RegExp(forbidden));
+  }
+
+  renderOCIImages(images, true, "");
+  assert.equal(panel.hidden, true);
+});
+
+test("renderOCIImages safely binds a hostile external name without inline JavaScript", () => {
+  const hostile = `ghcr.io/example/\" onmouseover=\"alert(1)`;
+  const button = { dataset: { ociName: hostile }, onclick: null };
+  const rows = { innerHTML: "", querySelectorAll: () => [button] };
+  let selected = "";
+  const renderOCIImages = evaluateFunction("renderOCIImages", {
+    document: { getElementById: id => id === "ociPanel" ? { classList: { toggle() {} } } : rows },
+    esc: value => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;"),
+    fmtAgo: () => "1h ago",
+    cloneFromOCI: name => { selected = name; },
+  });
+
+  renderOCIImages([{ name: hostile, source: "OCI", size: 1, disk: 2, accessed: "2026-08-23T12:00:00Z" }], false, "");
+  assert.match(rows.innerHTML, /data-oci-name="ghcr\.io\/example\/&quot; onmouseover=&quot;alert\(1\)"/);
+  assert.doesNotMatch(rows.innerHTML, /<button[^>]+onclick=/);
+  button.onclick();
+  assert.equal(selected, hostile);
+});
+
+test("cloneFromOCI opens clone management with the exact OCI reference", () => {
+  const source = { value: "", focusCalled: false, focus() { this.focusCalled = true; } };
+  const cloneRadio = { checked: false };
+  let shown = "";
+  let modeUpdates = 0;
+  const cloneFromOCI = evaluateFunction("cloneFromOCI", {
+    showTab: id => { shown = id; },
+    updateCreateMode: () => { modeUpdates++; },
+    document: {
+      querySelector: () => cloneRadio,
+      getElementById: () => source,
+    },
+  });
+  const exact = "ghcr.io/example/base@sha256:abc";
+
+  cloneFromOCI(exact);
+
+  assert.equal(shown, "vmm");
+  assert.equal(cloneRadio.checked, true);
+  assert.equal(modeUpdates, 1);
+  assert.equal(source.value, exact);
+  assert.equal(source.focusCalled, true);
+});
+
+test("SSH and MDM helpers ignore running OCI entries", () => {
+  const elements = {
+    sshTarget: { value: "", innerHTML: "" },
+    sshGuideVm: { value: "", innerHTML: "" },
+    copyMdmBtn: { disabled: false },
+  };
+  const document = { getElementById: id => elements[id] };
+  const vms = [
+    { name: "ghcr.io/example/base:latest", source: "OCI", state: "running", ip: "192.0.2.10" },
+    { name: "local-stopped", source: "local", state: "stopped", ip: "" },
+  ];
+  const globals = {
+    document,
+    esc: value => String(value),
+    isOCI: source => String(source || "").trim().toLowerCase() === "oci",
+    updateSshGuide() {},
+    mdmCopyInFlight: false,
+    latest: { vms },
+  };
+
+  evaluateFunction("fillSshTargets", globals)(vms);
+  assert.doesNotMatch(elements.sshTarget.innerHTML, /ghcr\.io/);
+  evaluateFunction("fillSshGuide", globals)(vms);
+  assert.doesNotMatch(elements.sshGuideVm.innerHTML, /ghcr\.io/);
+  evaluateFunction("updateMdmCopyButton", globals)(vms);
+  assert.equal(elements.copyMdmBtn.disabled, true);
+});

@@ -1,10 +1,49 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.31 adds memory
-safeguards and recovery controls. Version 1.30 adds native host performance
-monitoring. Version 1.29 contains the Jamf base-image preparation work and VM
-boot reliability fixes developed on the Motionbug fork after the v1.27
-baseline.
+This file records user-visible changes to Tart Oven. Version 1.32 separates OCI
+images from runnable local VMs and excludes them from scheduling by default.
+Version 1.31 adds memory safeguards and recovery controls. Version 1.30 adds
+native host performance monitoring. Version 1.29 contains the Jamf base-image
+preparation work and VM boot reliability fixes developed on the Motionbug fork
+after the v1.27 baseline.
+
+## 1.32 — 2026-08-23
+
+### Local VM and OCI image separation
+
+- Tart Oven now preserves Tart's `Source`, `Disk`, `Size`, and `Accessed`
+  metadata from both JSON list output and the older table fallback.
+- The Dashboard separates **Local VMs** from **OCI Images**. Local VMs retain
+  all existing lifecycle, SSH, notes, and recovery actions.
+- OCI rows show the complete registry reference, cached size, virtual-disk
+  size, and last-accessed value. Their only action is **Clone**.
+- The OCI Clone action opens VM Management in clone mode and selects the exact
+  tag or digest reported by Tart.
+- Search filters both sections. **Show running only** hides OCI Images and
+  shows only active local VMs.
+- Edit, delete, Jamf preparation, and other local-only selectors exclude OCI
+  entries. The clone-source selector includes both local VMs and OCI images.
+
+### Scheduler behavior and upgrades
+
+- Added `excludeOciFromScheduler`, enabled by default for new installations and
+  existing state files that predate the setting.
+- With the setting enabled, the scheduler skips entries whose Tart source is
+  `OCI`, case-insensitively. Local and unknown legacy sources retain their
+  previous behavior, and existing per-name/template exclusions still apply.
+- An explicit disabled value is preserved across restarts, allowing an
+  operator to opt OCI entries back into scheduling when desired.
+- Tart reports a clone as a local VM and does not expose its original OCI
+  source in `tart list`; Tart Oven therefore does not claim unavailable clone
+  provenance.
+
+### API and testing
+
+- `/api/vms` now exposes `source`, `disk`, `size`, and `accessed` for entries
+  discovered through Tart.
+- Added tests for JSON and table metadata, reconciliation, upgrade-safe config
+  migration, scheduler eligibility, Dashboard grouping, clone-only OCI rows,
+  running-filter behavior, and local-only management selectors.
 
 ## 1.31 — 2026-08-23
 

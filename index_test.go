@@ -36,6 +36,70 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 	}
 }
 
+func TestDashboardSeparatesLocalVMsAndOCIImages(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`>Local VMs<`, `>OCI Images<`, `id="localVmRows"`, `id="ociImageRows"`,
+		`Image location`, `Cached size`, `Virtual disk`, `Last accessed`,
+		`function isOCI`, `function cloneFromOCI`, `function renderOCIImages`,
+		`id="excludeOciFromScheduler"`, `excludeOciFromScheduler: document.getElementById("excludeOciFromScheduler").checked`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing OCI separation behavior %q", want)
+		}
+	}
+}
+
+func TestOCIImagesAreCloneOnlyAndHiddenByRunningFilter(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	ociRenderer := sourceSection(t, html, `function renderOCIImages`, `function renderTable`)
+	for _, want := range []string{
+		`runningOnly`, `ociPanel.classList.toggle("hidden", runningOnly)`,
+		`cloneFromOCI(`, `>Clone</button>`,
+	} {
+		if !strings.Contains(ociRenderer, want) {
+			t.Errorf("OCI renderer missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`act('run'`, `act('stop'`, `openVNC(`, `openEditModal(`} {
+		if strings.Contains(ociRenderer, forbidden) {
+			t.Errorf("OCI renderer exposes local-only action %q", forbidden)
+		}
+	}
+	clone := sourceSection(t, html, `function cloneFromOCI`, `function renderOCIImages`)
+	for _, want := range []string{
+		`showTab("vmm")`, `[value="clone"]`, `.checked = true`, `updateCreateMode()`, `cloneSource.value = name`,
+	} {
+		if !strings.Contains(clone, want) {
+			t.Errorf("OCI clone handoff missing %q", want)
+		}
+	}
+}
+
+func TestManagementActionsOnlyTargetLocalVMs(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := sourceSection(t, string(b), `function fillMgmtSelects`, `function updateMdmCopyButton`)
+	if !strings.Contains(section, `const local = vms.filter(v => !isOCI(v.source));`) {
+		t.Fatal("VM management selectors do not filter edit/delete/MDM actions to local VMs")
+	}
+	for _, want := range []string{`fillOne("editSelect", local)`, `fillOne("deleteSelect", local)`, `const running = local.filter`} {
+		if !strings.Contains(section, want) {
+			t.Errorf("local-only management selector missing %q", want)
+		}
+	}
+}
+
 func TestDashboardExplainsPreparedBaseCloneWorkflow(t *testing.T) {
 	b, err := content.ReadFile("index.html")
 	if err != nil {

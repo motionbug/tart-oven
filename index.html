@@ -293,7 +293,7 @@
 
     <div class="panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <h2 style="margin:0">Available VMs</h2>
+        <h2 style="margin:0">Local VMs</h2>
         <div style="display:flex;align-items:center;gap:16px">
           <input type="text" id="vmSearch" placeholder="Search VMs…" style="width:200px" autocomplete="off">
           <label class="radio"><span class="toggle"><input type="checkbox" id="showRunningOnly"><span class="slider"></span></span> Show running only</label>
@@ -301,7 +301,16 @@
       </div>
       <table>
         <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Notes</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
-        <tbody id="vmrows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
+        <tbody id="localVmRows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel" id="ociPanel">
+      <h2>OCI Images</h2>
+      <p class="muted">Cached registry images are kept separate from runnable local VMs. Clone an image to create a local VM.</p>
+      <table>
+        <thead><tr><th>Image location</th><th>Cached size</th><th>Virtual disk</th><th>Last accessed</th><th>Actions</th></tr></thead>
+        <tbody id="ociImageRows"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
       </table>
     </div>
 
@@ -511,6 +520,7 @@
         <div class="field"><label>Daily start time</label><input type="time" id="dailyStart"><small>Begin auto-running VMs</small></div>
         <div class="field"><label>Daily stop time</label><input type="time" id="dailyStop"><small>Stop running VMs</small></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="dailyEnabled"><span class="slider"></span></span> Limit scheduler to daily hours</label></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="excludeOciFromScheduler"><span class="slider"></span></span> Exclude OCI images from scheduler</label><small>Recommended: keep registry images for cloning and run only local VMs.</small></div>
         <div class="field" style="grid-column: 1 / -1;"><label>Excluded VM names (one per line or comma-separated)</label><textarea id="excluded"></textarea></div>
       </div>
     </div>
@@ -936,6 +946,7 @@ function fillConfig(c) {
   set("dailyStart", c.dailyStart || "08:00");
   set("dailyStop", c.dailyStop || "22:00");
   document.getElementById("dailyEnabled").checked = !!c.dailyEnabled;
+  document.getElementById("excludeOciFromScheduler").checked = c.excludeOciFromScheduler !== false;
   set("vmStoragePath", c.vmStoragePath);
   set("sharedDir", c.sharedDir);
   set("tartAppPath", c.tartAppPath || "/Applications/tart.app/Contents/MacOS/tart");
@@ -970,6 +981,7 @@ function readConfig() {
     maxConcurrent: num("maxConcurrent"), historyDays: num("historyDays"),
     schedulerMode: str("schedulerMode"),
     dailyEnabled: document.getElementById("dailyEnabled").checked,
+    excludeOciFromScheduler: document.getElementById("excludeOciFromScheduler").checked,
     dailyStart: str("dailyStart"), dailyStop: str("dailyStop"),
     excluded,
     paused: latest ? latest.config.paused : false,
@@ -1189,11 +1201,53 @@ function render(state) {
   if (activeTab === "performance") loadPerformance();
 }
 
+function isOCI(source) {
+  return String(source || "").trim().toLowerCase() === "oci";
+}
+
+function cloneFromOCI(name) {
+  showTab("vmm");
+  document.querySelector('input[name="createMode"][value="clone"]').checked = true;
+  updateCreateMode();
+  const cloneSource = document.getElementById("cloneSource");
+  cloneSource.value = name;
+  cloneSource.focus();
+}
+
+function renderOCIImages(images, runningOnly, query) {
+  const ociPanel = document.getElementById("ociPanel");
+  const tbody = document.getElementById("ociImageRows");
+  ociPanel.classList.toggle("hidden", runningOnly);
+  if (runningOnly) return;
+  let filtered = images;
+  if (query) filtered = filtered.filter(vm => vm.name.toLowerCase().includes(query));
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">' + (query ? "No OCI images match your search." : "No OCI images cached at this storage path.") + '</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(vm => {
+    const n = esc(vm.name);
+    const accessed = vm.accessed ? (Number.isNaN(Date.parse(vm.accessed)) ? esc(vm.accessed) : fmtAgo(vm.accessed)) : "—";
+    return '<tr>' +
+      '<td class="name mono"><b>' + n + '</b></td>' +
+      '<td>' + (Number.isFinite(vm.size) ? esc(vm.size) + ' GB' : '—') + '</td>' +
+      '<td>' + (Number.isFinite(vm.disk) ? esc(vm.disk) + ' GB' : '—') + '</td>' +
+      '<td class="muted" title="' + esc(vm.accessed || '') + '">' + accessed + '</td>' +
+      '<td class="acts"><button class="oci-clone" data-oci-name="' + n + '">Clone</button></td></tr>';
+  }).join("");
+  tbody.querySelectorAll(".oci-clone").forEach(button => {
+    button.onclick = () => cloneFromOCI(button.dataset.ociName);
+  });
+}
+
 function renderTable(vms) {
-  const tbody = document.getElementById("vmrows");
+  const tbody = document.getElementById("localVmRows");
   const runningOnly = document.getElementById("showRunningOnly").checked;
   const query = (document.getElementById("vmSearch").value || "").toLowerCase().trim();
-  let filtered = vms;
+  const local = vms.filter(v => !isOCI(v.source));
+  const images = vms.filter(v => isOCI(v.source));
+  renderOCIImages(images, runningOnly, query);
+  let filtered = local;
   if (runningOnly) {
     filtered = filtered.filter(v => v.state === "running" || v.state === "starting" || v.state === "stopping");
   }
@@ -1262,7 +1316,7 @@ setInterval(() => {
 function fillSshTargets(vms) {
   const sel = document.getElementById("sshTarget");
   const prev = sel.value;
-  const running = vms.filter(v => v.state === "running");
+  const running = vms.filter(v => !isOCI(v.source) && v.state === "running");
   sel.innerHTML = running.length
     ? running.map(v => '<option value="' + esc(v.name) + '">' + esc(v.name) + '</option>').join("")
     : '<option value="">— no running VM —</option>';
@@ -1437,9 +1491,10 @@ function fillOne(id, vms, opts) {
 }
 function fillMgmtSelects(vms) {
   fillOne("cloneSource", vms, { preferTemplate: true });
-  fillOne("editSelect", vms);
-  fillOne("deleteSelect", vms);
-  const running = vms.filter(v => v.state === "running");
+  const local = vms.filter(v => !isOCI(v.source));
+  fillOne("editSelect", local);
+  fillOne("deleteSelect", local);
+  const running = local.filter(v => v.state === "running");
   fillOne("mdmTarget", running);
   if (!running.length) {
     document.getElementById("mdmTarget").innerHTML = '<option value="">Start the base VM first</option>';
@@ -1449,7 +1504,7 @@ function fillMgmtSelects(vms) {
 
 function updateMdmCopyButton(vms) {
   const copyBtn = document.getElementById("copyMdmBtn");
-  const hasRunningVM = (vms || (latest && latest.vms) || []).some(v => v.state === "running");
+  const hasRunningVM = (vms || (latest && latest.vms) || []).some(v => !isOCI(v.source) && v.state === "running");
   copyBtn.disabled = mdmCopyInFlight || !hasRunningVM;
 }
 
@@ -1678,7 +1733,7 @@ function updateSshGuide() {
 }
 function fillSshGuide(vms) {
   const sel = document.getElementById("sshGuideVm");
-  const withIp = vms.filter(v => v.ip);
+  const withIp = vms.filter(v => !isOCI(v.source) && v.ip);
   const prev = sel.value;
   sel.innerHTML = withIp.length
     ? withIp.map(v => '<option value="' + esc(v.ip) + '">' + esc(v.name) + ' (' + esc(v.ip) + ')</option>').join("")

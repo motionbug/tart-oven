@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,7 +41,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.31"
+const version = "1.32"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -197,36 +198,37 @@ func expandHome(path string) string {
 // dashboard. Durations are kept as plain minutes/seconds so the JSON and the
 // HTML form stay simple.
 type Config struct {
-	Listen             string   `json:"listen"`          // host:port to bind, e.g. 0.0.0.0:8080
-	VMStoragePath      string   `json:"vmStoragePath"`   // becomes TART_HOME on every tart call
-	SharedDir          string   `json:"sharedDir"`       // host_resources bind mount
-	TartAppPath        string   `json:"tartAppPath"`     // full path to the tart binary
-	IntervalMinutes    int      `json:"intervalMinutes"` // how often the scheduler acts
-	WindowMinutes      int      `json:"windowMinutes"`   // how long each VM stays up
-	MaxConcurrent      int      `json:"maxConcurrent"`   // max VMs running at once
-	SchedulerMode      string   `json:"schedulerMode"`   // "random" | "sequential" (alphabetical)
-	Excluded           []string `json:"excluded"`        // VM names never auto-selected
-	JamfRecon          bool     `json:"jamfRecon"`       // run `jamf recon` after start/stop
-	Paused             bool     `json:"paused"`          // global scheduler pause
-	DailyEnabled       bool     `json:"dailyEnabled"`    // gate auto-runs to a daily time window
-	DailyStart         string   `json:"dailyStart"`      // "HH:MM" — begin running VMs
-	DailyStop          string   `json:"dailyStop"`       // "HH:MM" — stop running VMs
-	JamfBaseURL        string   `json:"jamfBaseUrl"`
-	JamfInvitationCode string   `json:"jamfInvitationCode"`
-	SSHUser            string   `json:"sshUser"`
-	SSHPassword        string   `json:"sshPassword"`     // guest SSH/sudo password; write-only
-	SSHKey             string   `json:"sshKey"`          // optional identity file path
-	SSHTimeoutSec      int      `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand      string   `json:"statusCommand"`   // command for "Get info"
-	ShutdownCommand    string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
-	ShutdownWaitSec    int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
-	RunArgs            string   `json:"runArgs"`         // extra args appended to every `tart run`
-	NetPriority        string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec     int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
-	HistoryDays        int      `json:"historyDays"`     // run-history retention in days
-	LogPath            string   `json:"logPath"`         // path to log file (rotation at 5MB)
-	ServerLabel        string   `json:"serverLabel"`     // custom label to identify this server instance
-	ShowRunningOnly    bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
+	Listen                  string   `json:"listen"`                  // host:port to bind, e.g. 0.0.0.0:8080
+	VMStoragePath           string   `json:"vmStoragePath"`           // becomes TART_HOME on every tart call
+	SharedDir               string   `json:"sharedDir"`               // host_resources bind mount
+	TartAppPath             string   `json:"tartAppPath"`             // full path to the tart binary
+	IntervalMinutes         int      `json:"intervalMinutes"`         // how often the scheduler acts
+	WindowMinutes           int      `json:"windowMinutes"`           // how long each VM stays up
+	MaxConcurrent           int      `json:"maxConcurrent"`           // max VMs running at once
+	SchedulerMode           string   `json:"schedulerMode"`           // "random" | "sequential" (alphabetical)
+	Excluded                []string `json:"excluded"`                // VM names never auto-selected
+	ExcludeOCIFromScheduler bool     `json:"excludeOciFromScheduler"` // keep cached OCI images clone-only by default
+	JamfRecon               bool     `json:"jamfRecon"`               // run `jamf recon` after start/stop
+	Paused                  bool     `json:"paused"`                  // global scheduler pause
+	DailyEnabled            bool     `json:"dailyEnabled"`            // gate auto-runs to a daily time window
+	DailyStart              string   `json:"dailyStart"`              // "HH:MM" — begin running VMs
+	DailyStop               string   `json:"dailyStop"`               // "HH:MM" — stop running VMs
+	JamfBaseURL             string   `json:"jamfBaseUrl"`
+	JamfInvitationCode      string   `json:"jamfInvitationCode"`
+	SSHUser                 string   `json:"sshUser"`
+	SSHPassword             string   `json:"sshPassword"`     // guest SSH/sudo password; write-only
+	SSHKey                  string   `json:"sshKey"`          // optional identity file path
+	SSHTimeoutSec           int      `json:"sshTimeoutSec"`   // ssh connect timeout
+	StatusCommand           string   `json:"statusCommand"`   // command for "Get info"
+	ShutdownCommand         string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
+	ShutdownWaitSec         int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
+	RunArgs                 string   `json:"runArgs"`         // extra args appended to every `tart run`
+	NetPriority             string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec          int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
+	HistoryDays             int      `json:"historyDays"`     // run-history retention in days
+	LogPath                 string   `json:"logPath"`         // path to log file (rotation at 5MB)
+	ServerLabel             string   `json:"serverLabel"`     // custom label to identify this server instance
+	ShowRunningOnly         bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
 }
 
 type configView struct {
@@ -271,32 +273,33 @@ func effectiveSSHCredentials(cfg Config, vm *VM) (string, string) {
 
 func defaultConfig() Config {
 	return Config{
-		Listen:          "127.0.0.1:9000",
-		VMStoragePath:   fallbackStoragePath, // /Users/Shared/Tart
-		SharedDir:       defaultSharedDir,
-		TartAppPath:     defaultTartBin,
-		IntervalMinutes: 5,
-		WindowMinutes:   120,
-		MaxConcurrent:   1,
-		SchedulerMode:   "sequential",
-		Excluded:        []string{},
-		JamfRecon:       false,
-		Paused:          true, // scheduler OFF until the user turns it on
-		DailyEnabled:    true,
-		DailyStart:      "08:30",
-		DailyStop:       "22:00",
-		SSHUser:         "admin",
-		SSHPassword:     "admin",
-		SSHKey:          "~/.ssh/tart-oven",
-		SSHTimeoutSec:   15,
-		StatusCommand:   `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
-		ShutdownCommand: "sudo shutdown -h now",
-		ShutdownWaitSec: 60,
-		RunArgs:         "",
-		NetPriority:     "wifi",
-		BootTimeoutSec:  60,
-		HistoryDays:     60,
-		LogPath:         "~/Library/Logs/tart-oven.log",
+		Listen:                  "127.0.0.1:9000",
+		VMStoragePath:           fallbackStoragePath, // /Users/Shared/Tart
+		SharedDir:               defaultSharedDir,
+		TartAppPath:             defaultTartBin,
+		IntervalMinutes:         5,
+		WindowMinutes:           120,
+		MaxConcurrent:           1,
+		SchedulerMode:           "sequential",
+		Excluded:                []string{},
+		ExcludeOCIFromScheduler: true,
+		JamfRecon:               false,
+		Paused:                  true, // scheduler OFF until the user turns it on
+		DailyEnabled:            true,
+		DailyStart:              "08:30",
+		DailyStop:               "22:00",
+		SSHUser:                 "admin",
+		SSHPassword:             "admin",
+		SSHKey:                  "~/.ssh/tart-oven",
+		SSHTimeoutSec:           15,
+		StatusCommand:           `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
+		ShutdownCommand:         "sudo shutdown -h now",
+		ShutdownWaitSec:         60,
+		RunArgs:                 "",
+		NetPriority:             "wifi",
+		BootTimeoutSec:          60,
+		HistoryDays:             60,
+		LogPath:                 "~/Library/Logs/tart-oven.log",
 	}
 }
 
@@ -359,6 +362,10 @@ func inDailyWindow(now time.Time, start, stop string) bool {
 // stopped | starting | running | stopping | suspending | suspended.
 type VM struct {
 	Name         string    `json:"name"`
+	Source       string    `json:"source,omitempty"`
+	Disk         int       `json:"disk,omitempty"`     // virtual disk capacity reported by Tart, in GB
+	Size         int       `json:"size,omitempty"`     // cached storage used, in GB
+	Accessed     string    `json:"accessed,omitempty"` // RFC3339 in JSON mode; relative text in table fallback
 	State        string    `json:"state"`
 	IP           string    `json:"ip,omitempty"`
 	StartedAt    time.Time `json:"startedAt,omitempty"`
@@ -476,10 +483,13 @@ type stateSnapshot struct {
 
 // tartVM matches the JSON emitted by `tart list --format json`.
 type tartVM struct {
-	Source  string `json:"Source"`
-	Name    string `json:"Name"`
-	State   string `json:"State"`
-	Running bool   `json:"Running"`
+	Source   string `json:"Source"`
+	Name     string `json:"Name"`
+	Disk     int    `json:"Disk"`
+	Size     int    `json:"Size"`
+	Accessed string `json:"Accessed"`
+	State    string `json:"State"`
+	Running  bool   `json:"Running"`
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +511,17 @@ func (m *Manager) load() {
 	// an old/partial file can't leave us with zero intervals etc.
 	m.cfg = p.Config
 	d := defaultConfig()
+	// A plain bool cannot distinguish an older state file with no field from an
+	// explicit false. Detect field presence so upgrades receive the safe default
+	// while users can still opt OCI images back into scheduling.
+	var presence struct {
+		Config struct {
+			ExcludeOCIFromScheduler *bool `json:"excludeOciFromScheduler"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(data, &presence); err == nil && presence.Config.ExcludeOCIFromScheduler == nil {
+		m.cfg.ExcludeOCIFromScheduler = d.ExcludeOCIFromScheduler
+	}
 	if m.cfg.Listen == "" {
 		m.cfg.Listen = d.Listen
 	}
@@ -905,7 +926,8 @@ func (m *Manager) listTart() ([]tartVM, error) {
 }
 
 // parseTartTable is the fallback for tart versions without JSON output.
-// Expected columns: Source Name Disk Size [SizeOnDisk] State
+// Expected columns: Source Name Disk Size Accessed State. Accessed can contain
+// spaces (for example "3 hours ago"), so it occupies every field before State.
 func (m *Manager) parseTartTable(home string) ([]tartVM, error) {
 	out, err := m.tartOutputTimeout(20*time.Second, home, "list")
 	if err != nil {
@@ -922,12 +944,15 @@ func (m *Manager) parseTartTable(home string) ([]tartVM, error) {
 		if i == 0 && strings.EqualFold(fields[0], "Source") {
 			continue
 		}
-		if len(fields) < 3 {
+		if len(fields) < 6 {
 			continue
 		}
 		name := fields[1]
+		disk, _ := strconv.Atoi(fields[2])
+		size, _ := strconv.Atoi(fields[3])
+		accessed := strings.Join(fields[4:len(fields)-1], " ")
 		state := strings.ToLower(fields[len(fields)-1])
-		vms = append(vms, tartVM{Source: fields[0], Name: name, State: state})
+		vms = append(vms, tartVM{Source: fields[0], Name: name, Disk: disk, Size: size, Accessed: accessed, State: state})
 	}
 	return vms, nil
 }
@@ -1064,6 +1089,10 @@ func (m *Manager) reconcile() {
 			vm = &VM{Name: t.Name}
 			m.vms[t.Name] = vm
 		}
+		vm.Source = t.Source
+		vm.Disk = t.Disk
+		vm.Size = t.Size
+		vm.Accessed = t.Accessed
 		if m.busy[t.Name] {
 			continue // mid-operation; leave transient state untouched
 		}
@@ -1622,6 +1651,20 @@ func (m *Manager) isRunning(name string) bool {
 // Scheduler
 // ---------------------------------------------------------------------------
 
+func isOCI(source string) bool {
+	return strings.EqualFold(strings.TrimSpace(source), "OCI")
+}
+
+func eligibleForScheduler(vm *VM, excludeOCI bool, excluded map[string]bool, busy bool) bool {
+	if vm == nil || vm.State != "stopped" || busy {
+		return false
+	}
+	if strings.Contains(vm.Name, templateMarker) || excluded[vm.Name] {
+		return false
+	}
+	return !excludeOCI || !isOCI(vm.Source)
+}
+
 // schedulerLoop waits for the configured interval and ticks. The interval is
 // re-read each cycle and the wait is interruptible via the reload channel so
 // config changes take effect immediately.
@@ -1652,6 +1695,7 @@ func (m *Manager) tick() {
 	}
 	mounted := m.storageMounted
 	maxc := m.cfg.MaxConcurrent
+	excludeOCI := m.cfg.ExcludeOCIFromScheduler
 	now := time.Now()
 	within := !m.cfg.DailyEnabled || inDailyWindow(now, m.cfg.DailyStart, m.cfg.DailyStop)
 	excluded := make(map[string]bool, len(m.cfg.Excluded))
@@ -1679,10 +1723,7 @@ func (m *Manager) tick() {
 	var fresh, failed []string
 	if within && mounted && running-len(toStop) < maxc {
 		for name, vm := range m.vms {
-			if vm.State != "stopped" || m.busy[name] {
-				continue
-			}
-			if strings.Contains(name, templateMarker) || excluded[name] {
+			if !eligibleForScheduler(vm, excludeOCI, excluded, m.busy[name]) {
 				continue
 			}
 			if vm.BootFailed {
@@ -2854,8 +2895,20 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var in Config
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := json.Unmarshal(body, &in); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var presence struct {
+		ExcludeOCIFromScheduler *bool `json:"excludeOciFromScheduler"`
+	}
+	if err := json.Unmarshal(body, &presence); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2875,6 +2928,7 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	prevPaused := m.cfg.Paused
 	prevPassword := m.cfg.SSHPassword
 	prevInvitationCode := m.cfg.JamfInvitationCode
+	prevExcludeOCI := m.cfg.ExcludeOCIFromScheduler
 	m.cfg = in
 	if m.cfg.Listen == "" {
 		m.cfg.Listen = prevListen
@@ -2887,6 +2941,9 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.cfg.JamfInvitationCode == "" {
 		m.cfg.JamfInvitationCode = prevInvitationCode
+	}
+	if presence.ExcludeOCIFromScheduler == nil {
+		m.cfg.ExcludeOCIFromScheduler = prevExcludeOCI
 	}
 	if m.cfg.IntervalMinutes < 1 {
 		m.cfg.IntervalMinutes = 1
