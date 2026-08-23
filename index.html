@@ -172,6 +172,8 @@
   .s-stopped  { color: var(--grey); }   .s-stopped .dot  { background: var(--grey); }
   .s-starting { color: var(--amber); }  .s-starting .dot { background: var(--amber); animation: pulse 1s infinite; }
   .s-stopping { color: var(--amber); }  .s-stopping .dot { background: var(--amber); animation: pulse 1s infinite; }
+  .s-suspending { color: var(--amber); } .s-suspending .dot { background: var(--amber); animation: pulse 1s infinite; }
+  .s-suspended { color: var(--accent); } .s-suspended .dot { background: var(--accent); }
   @keyframes pulse { 50% { opacity: .35; } }
   .tag { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); margin-left: 6px; }
   .tag.warn { color: var(--amber); border-color: rgba(255,183,77,.55); background: rgba(255,183,77,.10); }
@@ -460,6 +462,7 @@
         <label><input type="checkbox" id="editRandMac"> New random MAC</label>
         <label><input type="checkbox" id="editRandSerial"> New random serial</label>
       </div>
+      <p id="memorySuggestion" class="muted" style="margin:10px 0 0"></p>
       <div class="actions"><button id="editBtn">Apply changes</button><span class="muted">VM must be stopped.</span></div>
     </div>
 
@@ -837,7 +840,10 @@ function renderPerformance(snapshot) {
   const pressureAvailable = !!sample.pressureAvailable;
   const pressure = sample.memoryPressure || "normal";
   const pressureLabel = pressure.charAt(0).toUpperCase() + pressure.slice(1);
-  setCard("perfPressure", pressureAvailable, pressureLabel, statusText("pressure", pressure), "macOS kernel pressure state", performanceColour("pressure", pressure));
+  const pressureDetail = pressure === "critical"
+    ? "New VM starts are deferred while pressure is critical"
+    : "macOS kernel pressure state";
+  setCard("perfPressure", pressureAvailable, pressureLabel, statusText("pressure", pressure), pressureDetail, performanceColour("pressure", pressure));
 
   const systemDiskAvailable = !!sample.systemDiskAvailable;
   const systemDiskPercent = percentage(sample.systemDiskUsedBytes, sample.systemDiskTotalBytes, systemDiskAvailable);
@@ -1218,6 +1224,7 @@ function renderTable(vms) {
     const rem = (vm.state === "running" && !latest.config.paused) ? fmtRemaining(vm.stopAt) : "—";
     const ip = vm.ip ? '<span class="ip">' + esc(vm.ip) + '</span>' : '<span class="muted">—</span>';
     const notRunning = vm.state !== "running" ? " disabled" : "";
+    const stopDisabled = vm.state === "suspended" ? " disabled" : busy;
     const noScreen = (vm.state === "running" && vm.ip) ? "" : " disabled";
     const notesPreview = vm.notes ? esc(vm.notes.length > 30 ? vm.notes.slice(0, 30) + '…' : vm.notes) : '<span class="muted">—</span>';
     const effUser = vm.sshUser || (latest.config && latest.config.sshUser) || "admin";
@@ -1232,7 +1239,9 @@ function renderTable(vms) {
       '<td class="mono" data-stop="' + (vm.stopAt || "") + '" data-state="' + vm.state + '">' + rem + '</td>' +
       '<td class="acts"><div class="row-actions">' +
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
-        '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + busy + '>Stop</button>' +
+        '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + stopDisabled + '>Stop</button>' +
+        '<button class="ghost" onclick="act(\'suspend\',\'' + n + '\')"' + notRunning + busy + ' title="Save eligible VM state and release its running host memory">Suspend</button>' +
+        '<button class="ghost" onclick="act(\'graceful-shutdown\',\'' + n + '\')"' + notRunning + busy + ' title="Ask macOS to shut down over SSH; never force-stops on failure">Graceful shutdown</button>' +
         '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
         '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
         '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
@@ -1506,12 +1515,14 @@ document.getElementById("createBtn").onclick = async () => {
 async function loadVMInfo() {
   const name = document.getElementById("editSelect").value;
   const info = document.getElementById("editInfo");
-  if (!name) { info.textContent = ""; return; }
+  const memorySuggestion = document.getElementById("memorySuggestion");
+  if (!name) { info.textContent = ""; memorySuggestion.textContent = ""; return; }
   info.textContent = "loading…";
+  memorySuggestion.textContent = "";
   try {
     const res = await api("/api/vm/get?name=" + encodeURIComponent(name));
     const d = await res.json();
-    if (d.error) { info.textContent = d.error; return; }
+    if (d.error) { info.textContent = d.error; memorySuggestion.textContent = ""; return; }
     document.getElementById("editCpu").value = d.CPU || "";
     document.getElementById("editMemory").value = d.Memory || "";
     document.getElementById("editDisplay").value = d.Display || "";
@@ -1526,7 +1537,10 @@ async function loadVMInfo() {
     document.getElementById("editSshUser").value = vm && vm.sshUser ? vm.sshUser : "";
     document.getElementById("editSshPassword").value = ""; // write-only; never echoed back by the server
     info.textContent = "current: " + (d.OS || "?") + " · " + d.CPU + " CPU · " + d.Memory + " MB · disk " + d.Disk + " GB · " + (d.State || "?");
-  } catch (e) { info.textContent = "error: " + e.message; }
+    memorySuggestion.textContent = String(d.State || "").toLowerCase() === "stopped"
+      ? "Memory suggestion: if this VM contributes to host pressure, lower Memory (MB) in small steps and test it. Lowering memory applies on the next boot; Tart enforces the guest minimum."
+      : "Stop the VM before changing its memory allocation.";
+  } catch (e) { info.textContent = "error: " + e.message; memorySuggestion.textContent = ""; }
 }
 
 document.getElementById("editBtn").onclick = async () => {

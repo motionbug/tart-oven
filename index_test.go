@@ -175,3 +175,52 @@ func TestPerformancePressureLegendNamesEveryState(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardContainsMemoryRecoveryActions(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`act(\'suspend\'`, `act(\'graceful-shutdown\'`,
+		`/api/" + kind`, `Suspend`, `Graceful shutdown`,
+		`New VM starts are deferred while pressure is critical`,
+		`id="memorySuggestion"`, `Lowering memory applies on the next boot`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing memory safeguard %q", want)
+		}
+	}
+}
+
+func TestMemoryRecoveryActionsOnlyEnableForRunningVMs(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderTable := sourceSection(t, string(b), `function renderTable`, `// keep "time remaining"`)
+	for _, want := range []string{
+		`const notRunning = vm.state !== "running" ? " disabled" : "";`,
+		`const stopDisabled = vm.state === "suspended" ? " disabled" : busy;`,
+		`act(\'suspend\'`, `+ notRunning +`,
+		`act(\'graceful-shutdown\'`,
+	} {
+		if !strings.Contains(renderTable, want) {
+			t.Errorf("running-only action guard missing %q", want)
+		}
+	}
+}
+
+func TestVMLookupClearsPreviousMemorySuggestion(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadVMInfo := sourceSection(t, string(b), `async function loadVMInfo`, `document.getElementById("editBtn")`)
+	loading := strings.Index(loadVMInfo, `memorySuggestion.textContent = "";`)
+	fetching := strings.Index(loadVMInfo, `await api("/api/vm/get?name="`)
+	if loading < 0 || fetching < 0 || loading > fetching {
+		t.Fatal("loadVMInfo does not clear the previous memory suggestion before fetching another VM")
+	}
+}

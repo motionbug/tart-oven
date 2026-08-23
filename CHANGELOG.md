@@ -1,9 +1,48 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.30 adds native
-host performance monitoring. Version 1.29 contains the Jamf base-image
-preparation work and VM boot reliability fixes developed on the Motionbug fork
-after the v1.27 baseline.
+This file records user-visible changes to Tart Oven. Version 1.31 adds memory
+safeguards and recovery controls. Version 1.30 adds native host performance
+monitoring. Version 1.29 contains the Jamf base-image preparation work and VM
+boot reliability fixes developed on the Motionbug fork after the v1.27
+baseline.
+
+## 1.31 — 2026-08-23
+
+### Memory-pressure safeguards
+
+- New VM starts are deferred while the latest available macOS kernel-pressure
+  sample is Critical. The gate covers scheduled and manual starts, leaves
+  running VMs untouched, and clears when a later sample reports Warning or
+  Normal.
+- The Performance pressure card explains when start deferral is active.
+- Tart Oven never invokes macOS `purge`; active VM memory is not treated as a
+  file-cache cleanup problem.
+- After create and clone tasks, Tart Oven measures its own idle Go heap and
+  calls `debug.FreeOSMemory()` only when at least 64 MiB is eligible to be
+  returned to macOS. Go's normal background scavenging handles smaller values.
+
+### VM recovery controls
+
+- Added per-running-VM **Suspend** and **Graceful shutdown** actions.
+- Suspend uses `tart suspend` and reports unsupported or failed snapshots on
+  the VM without falling back to Stop.
+- Graceful shutdown sends the configured SSH shutdown command, waits for the
+  guest to stop, and leaves it running with a visible error if shutdown cannot
+  be confirmed. It never calls `tart stop` or kills the Tart process.
+- The existing Stop path is unchanged: it retains its current SSH-first flow,
+  Tart fallback, scheduler behavior, and final force-kill fallback.
+- Suspended VMs remain protected from configuration, rename, and delete
+  operations until they are resumed and stopped normally.
+- The stopped-VM editor now suggests lowering VM memory in small tested steps
+  when host pressure warrants it. Tart Oven never changes VM memory
+  automatically; changes apply on the next boot.
+
+### API and testing
+
+- Added `POST /api/suspend` and `POST /api/graceful-shutdown`.
+- Added tests for measured Go-heap release, critical-pressure start deferral,
+  suspend/graceful command isolation, route registration, suspended-state
+  safety, running-only UI controls, and release consistency.
 
 ## 1.30 — 2026-08-22
 

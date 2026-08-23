@@ -40,7 +40,7 @@ import (
 //go:embed index.html README.md
 var content embed.FS
 
-const version = "1.30"
+const version = "1.31"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -356,7 +356,7 @@ func inDailyWindow(now time.Time, start, stop string) bool {
 }
 
 // VM is a single managed virtual machine. State is one of:
-// stopped | starting | running | stopping.
+// stopped | starting | running | stopping | suspending | suspended.
 type VM struct {
 	Name         string    `json:"name"`
 	State        string    `json:"state"`
@@ -443,6 +443,10 @@ type Manager struct {
 	reload               chan struct{} // poke the scheduler when interval changes
 	mdmCopier            mdmProfileCopier
 	mdmResolveIP         mdmIPResolver
+	tartOperation        func(context.Context, string, ...string) ([]byte, error)
+	tartOutputOperation  func(context.Context, string, ...string) (string, error)
+	sshOperation         func(context.Context, string, string, string) execResult
+	runningProbe         func(string) (bool, error)
 }
 
 // persisted is the on-disk shape of state.json.
@@ -649,6 +653,13 @@ func (m *Manager) tartCmdCtx(ctx context.Context, home string, args ...string) *
 func (m *Manager) tartOutputTimeout(d time.Duration, home string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
+	return m.tartOutputContext(ctx, home, args...)
+}
+
+func (m *Manager) tartOutputContext(ctx context.Context, home string, args ...string) (string, error) {
+	if m.tartOutputOperation != nil {
+		return m.tartOutputOperation(ctx, home, args...)
+	}
 	out, err := m.tartCmdCtx(ctx, home, args...).Output()
 	return string(out), err
 }
@@ -1140,6 +1151,16 @@ func (m *Manager) doRun(name, trigger string) {
 		vm = &VM{Name: name}
 		m.vms[name] = vm
 	}
+	if deferVMStartForHistory(m.performanceHistory) {
+		if vm.State == "" {
+			vm.State = "stopped"
+		}
+		vm.LastError = "not started: host is under critical memory pressure"
+		m.mu.Unlock()
+		m.broadcast()
+		m.logln("deferred start of %s: host is under critical memory pressure", name)
+		return
+	}
 	// Hard concurrency ceiling: Virtualization.framework allows at most 2 VMs.
 	// Enforced here so it covers manual runs as well as the scheduler.
 	active := 0
@@ -1317,6 +1338,12 @@ func (m *Manager) doStop(name string) {
 		m.mu.Unlock()
 		return
 	}
+	if !stopAllowedForState(vm.State) {
+		vm.LastError = "resume the suspended VM before using Stop"
+		m.mu.Unlock()
+		m.broadcast()
+		return
+	}
 	m.setBusy(name, true)
 	vm.State = "stopping"
 	home := m.cfg.VMStoragePath
@@ -1420,17 +1447,175 @@ func (m *Manager) doStop(name string) {
 	log.Printf("stopped %q", name)
 }
 
-func (m *Manager) isRunning(name string) bool {
+func (m *Manager) runTartOperation(ctx context.Context, home string, args ...string) ([]byte, error) {
+	if m.tartOperation != nil {
+		return m.tartOperation(ctx, home, args...)
+	}
+	return m.tartCmdCtx(ctx, home, args...).CombinedOutput()
+}
+
+func (m *Manager) runSSHOperation(ctx context.Context, name, command, password string) execResult {
+	if m.sshOperation != nil {
+		return m.sshOperation(ctx, name, command, password)
+	}
+	return m.sshExecContext(ctx, name, command, password)
+}
+
+func (m *Manager) probeVMRunning(name string) (bool, error) {
+	if m.runningProbe != nil {
+		return m.runningProbe(name)
+	}
+	return m.vmRunningState(name)
+}
+
+func (m *Manager) finishVMRun(name, state string) {
+	m.mu.Lock()
+	if vm := m.vms[name]; vm != nil {
+		vm.State = state
+		vm.StartedAt = time.Time{}
+		vm.StopAt = time.Time{}
+		vm.LastError = ""
+	}
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].Name == name && m.history[i].StoppedAt.IsZero() {
+			m.history[i].StoppedAt = time.Now()
+			break
+		}
+	}
+	m.setBusy(name, false)
+	m.save()
+	m.mu.Unlock()
+	m.broadcast()
+}
+
+// doSuspend asks Tart to snapshot and stop an eligible suspendable VM. It is
+// deliberately separate from doStop so it can never fall back to force-stop.
+func (m *Manager) doSuspend(name string) {
+	m.mu.Lock()
+	vm := m.vms[name]
+	if vm == nil || vm.State != "running" || m.busy[name] {
+		m.mu.Unlock()
+		return
+	}
+	m.setBusy(name, true)
+	vm.State = "suspending"
+	vm.LastError = ""
+	home := m.cfg.VMStoragePath
+	m.mu.Unlock()
+	m.broadcast()
+
+	m.logln("$ tart suspend %s", name)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	out, err := m.runTartOperation(ctx, home, "suspend", name)
+	cancel()
+	if err != nil {
+		message := fmt.Sprintf("suspend failed: %v%s", err, prefixIfNotEmpty(": ", strings.TrimSpace(string(out))))
+		m.mu.Lock()
+		if vm := m.vms[name]; vm != nil {
+			vm.State = "running"
+			vm.LastError = message
+		}
+		m.setBusy(name, false)
+		m.mu.Unlock()
+		m.broadcast()
+		m.logln("suspend %s failed: %s", name, message)
+		return
+	}
+
+	m.finishVMRun(name, "suspended")
+	m.logln("suspended %s", name)
+}
+
+// doGracefulShutdown sends only the configured guest shutdown command. Unlike
+// doStop, it never invokes `tart stop` or kills the Tart process on failure.
+func (m *Manager) doGracefulShutdown(name string) {
+	m.mu.Lock()
+	vm := m.vms[name]
+	if vm == nil || vm.State != "running" || m.busy[name] {
+		m.mu.Unlock()
+		return
+	}
+	command := strings.TrimSpace(m.cfg.ShutdownCommand)
+	if command == "" {
+		vm.LastError = "graceful shutdown unavailable: configure a shutdown command"
+		m.mu.Unlock()
+		m.broadcast()
+		return
+	}
+	password := vm.SSHPassword
+	if password == "" {
+		password = m.cfg.SSHPassword
+	}
+	wait := time.Duration(m.cfg.ShutdownWaitSec) * time.Second
+	if wait <= 0 {
+		wait = 60 * time.Second
+	}
+	m.setBusy(name, true)
+	vm.State = "stopping"
+	vm.LastError = ""
+	m.mu.Unlock()
+	m.broadcast()
+
+	m.logln("$ ssh %s %q (graceful shutdown only)", name, command)
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	deadline, _ := ctx.Deadline()
+	result := m.runSSHOperation(ctx, name, command, password)
+	cancel()
+	var probeErr error
+	for {
+		running, err := m.probeVMRunning(name)
+		if err != nil {
+			probeErr = err
+			break
+		}
+		if !running {
+			m.finishVMRun(name, "stopped")
+			m.logln("%s shut down cleanly via SSH", name)
+			return
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(min(2*time.Second, time.Until(deadline)))
+	}
+
+	detail := strings.TrimSpace(result.Error)
+	if detail == "" {
+		detail = lastLine(result.Stderr)
+	}
+	message := "graceful shutdown timed out; VM was left running"
+	if probeErr != nil {
+		message = "graceful shutdown could not confirm shutdown; VM was left running: " + probeErr.Error()
+	} else if detail != "" {
+		message += ": " + detail
+	}
+	m.mu.Lock()
+	if vm := m.vms[name]; vm != nil {
+		vm.State = "running"
+		vm.LastError = message
+	}
+	m.setBusy(name, false)
+	m.mu.Unlock()
+	m.broadcast()
+	m.logln("graceful shutdown %s failed: %s", name, message)
+}
+
+func (m *Manager) vmRunningState(name string) (bool, error) {
 	list, err := m.listTart()
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, t := range list {
 		if t.Name == name {
-			return t.State == "running"
+			return t.State == "running", nil
 		}
 	}
-	return false
+	return false, nil
+}
+
+func (m *Manager) isRunning(name string) bool {
+	running, _ := m.vmRunningState(name)
+	return running
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,6 +1762,10 @@ func sshOutcome(res execResult) (bool, string) {
 // never persisted, while doStop passes the persisted per-VM/default
 // Config.SSHPassword so a clean shutdown never needs an interactive prompt.
 func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
+	return m.sshExecContext(context.Background(), name, command, sudoPassword)
+}
+
+func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPassword string) execResult {
 	m.mu.Lock()
 	vm := m.vms[name]
 	ip := ""
@@ -1594,7 +1783,9 @@ func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
 
 	if ip == "" {
 		// Resolve on demand if we don't have a cached IP.
-		out, err := m.tartOutputTimeout(20*time.Second, home, "ip", name, "--wait", "10", "--resolver", "arp")
+		resolveCtx, cancelResolve := context.WithTimeout(ctx, 20*time.Second)
+		out, err := m.tartOutputContext(resolveCtx, home, "ip", name, "--wait", "10", "--resolver", "arp")
+		cancelResolve()
 		if err != nil {
 			return execResult{Error: "could not resolve IP: " + err.Error()}
 		}
@@ -1634,7 +1825,7 @@ func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
 	}
 	args = append(args, fmt.Sprintf("%s@%s", user, ip), remoteCmd)
 
-	cmd := exec.Command("ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	if sudoPassword != "" {
 		cmd.Stdin = strings.NewReader(sudoPassword + "\n")
 	}
@@ -1927,6 +2118,9 @@ func (m *Manager) createVMs(req createReq) {
 			}
 		}
 		m.finishTask(t, err)
+		if releasable, released := maybeReleaseGoMemory(runtimeGoMemory{}); released {
+			m.logln("released idle Go heap after %s task (%.0f MiB eligible)", req.Mode, float64(releasable)/(1<<20))
+		}
 		m.reconcile()
 		m.broadcast()
 		if m.cfg.JamfRecon {
@@ -1940,7 +2134,7 @@ func (m *Manager) isActive(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm := m.vms[name]
-	return vm != nil && (vm.State == "running" || vm.State == "starting" || m.busy[name])
+	return vm != nil && (vm.State == "running" || vm.State == "starting" || vm.State == "suspending" || vm.State == "suspended" || m.busy[name])
 }
 
 // ---------------------------------------------------------------------------
@@ -2313,6 +2507,26 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		go m.doStop(name)
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
+	mux.HandleFunc("/api/suspend", func(w http.ResponseWriter, r *http.Request) {
+		name, err := decodeName(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		go m.doSuspend(name)
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
+	mux.HandleFunc("/api/graceful-shutdown", func(w http.ResponseWriter, r *http.Request) {
+		name, err := decodeName(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		go m.doGracefulShutdown(name)
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 

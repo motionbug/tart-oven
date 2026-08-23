@@ -6,8 +6,9 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's virtualization framework.
 
-Current release: **1.30**. See [CHANGELOG.md](CHANGELOG.md) for the complete
-performance-monitoring, Jamf preparation, and VM boot-fix notes.
+Current release: **1.31**. See [CHANGELOG.md](CHANGELOG.md) for the complete
+memory-safeguard, performance-monitoring, Jamf preparation, and VM boot-fix
+notes.
 
 ## What it does
 
@@ -21,8 +22,9 @@ performance-monitoring, Jamf preparation, and VM boot-fix notes.
   refreshes both. Red usually means the key isn't set up.
 - **History logs** — every vm run is captured in
   a rolling log for better visibility.
-- **Per-VM actions** — Run, Stop, Restart, Send command (SSH), Get info (SSH
-  status command, on demand only), and Screen (open macOS Screen Sharing).
+- **Per-VM actions** — Run, Stop, Suspend, Graceful shutdown, Restart, Send
+  command (SSH), Get info (SSH status command, on demand only), and Screen
+  (open macOS Screen Sharing).
 - **VM management** — this server detects Tart installations and can automatically install Tart when missing. It also lets you create/clone/edit/delete VMs.
 - **Jamf base preparation** — generate an enrollment profile from a saved Jamf
   Pro base URL and invitation ID, then copy and verify it on the Desktop of
@@ -30,6 +32,10 @@ performance-monitoring, Jamf preparation, and VM boot-fix notes.
 - **Host performance monitoring** — inspect current native host CPU, memory,
   kernel pressure, storage, disk I/O, and uptime alongside 24 hours of
   in-memory charts.
+- **Memory safeguards** — defer new VM starts while macOS reports critical
+  memory pressure, release substantial idle Go heap after create/clone work,
+  and provide explicit suspend and guest-shutdown controls without changing
+  the existing Stop workflow.
 
 The intended workflow is to clone and start one clean base VM, copy the profile
 to its Desktop, stop it without enrolling it, and then clone that prepared base.
@@ -236,6 +242,28 @@ The history is memory-only: Tart Oven retains at most 1,440 one-minute samples
 (up to 24 hours). It is not written to `state.json`, so the performance history
 starts fresh whenever Tart Oven restarts.
 
+When the latest available kernel-pressure sample is **Critical**, Tart Oven
+defers both scheduled and manual starts. Running VMs are left alone and normal
+start behavior resumes after a later sample returns to Warning or Normal. The
+Performance card explains when this gate is active.
+
+Tart Oven never runs macOS `purge`: clearing the host file cache does not free
+active VM memory and can slow later disk reads. After a create or clone task,
+Tart Oven instead measures its own idle Go heap. It requests an in-process
+garbage collection and page release only when at least 64 MiB is idle but has
+not already been returned to macOS.
+
+Per-VM **Suspend** asks Tart to save an eligible suspendable VM and release its
+running host allocation. The VM must have been started with Tart's
+`--suspendable` option (add it to **Custom run arguments**) and the host/guest
+must support Tart save/restore; otherwise Tart Oven leaves the VM running and
+shows Tart's error. **Graceful shutdown** sends only the configured SSH
+shutdown command and leaves the VM running if it cannot confirm shutdown; it
+never falls back to `tart stop`. The existing **Stop** action and scheduled
+stopping behavior are unchanged. For a fully stopped VM, the editor suggests
+reducing Memory (MB) in small tested steps; changes apply on its next boot and
+are never made automatically.
+
 Cards and chart headers show **Unavailable** when the corresponding metric
 could not be collected in the latest sample. Other metrics in that sample can
 still be displayed; Tart Oven does not substitute an estimate for an
@@ -354,6 +382,8 @@ producing network traffic, and **Boot timeout** is long enough for that image.
 | GET  | `/api/vms`    | — | full state (VMs + config + storage) |
 | POST | `/api/run`    | `{name}` | run a VM now |
 | POST | `/api/stop`   | `{name}` | stop a VM now |
+| POST | `/api/suspend` | `{name}` | suspend an eligible running VM without Stop fallback |
+| POST | `/api/graceful-shutdown` | `{name}` | request guest shutdown over SSH without Stop fallback |
 | POST | `/api/restart`| `{name}` | stop then run |
 | POST | `/api/exec`   | `{name,command}` | SSH exec, returns stdout/stderr/exit |
 | GET  | `/api/info`   | `?name=` | SSH status command output |
