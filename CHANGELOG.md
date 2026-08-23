@@ -14,6 +14,8 @@ baseline.
   sample is Critical. The gate covers scheduled and manual starts, leaves
   running VMs untouched, and clears when a later sample reports Warning or
   Normal.
+- An unavailable pressure sample keeps the last available state instead of
+  clearing a Critical gate after a transient collection failure.
 - The Performance pressure card explains when start deferral is active.
 - Tart Oven never invokes macOS `purge`; active VM memory is not treated as a
   file-cache cleanup problem.
@@ -28,7 +30,8 @@ baseline.
   the VM without falling back to Stop.
 - Graceful shutdown sends the configured SSH shutdown command, waits for the
   guest to stop, and leaves it running with a visible error if shutdown cannot
-  be confirmed. It never calls `tart stop` or kills the Tart process.
+  be confirmed. Its timeout covers on-demand IP resolution and SSH execution.
+  It never calls `tart stop` or kills the Tart process.
 - The existing Stop path is unchanged: it retains its current SSH-first flow,
   Tart fallback, scheduler behavior, and final force-kill fallback.
 - Suspended VMs remain protected from configuration, rename, and delete

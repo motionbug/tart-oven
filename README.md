@@ -242,28 +242,6 @@ The history is memory-only: Tart Oven retains at most 1,440 one-minute samples
 (up to 24 hours). It is not written to `state.json`, so the performance history
 starts fresh whenever Tart Oven restarts.
 
-When the latest available kernel-pressure sample is **Critical**, Tart Oven
-defers both scheduled and manual starts. Running VMs are left alone and normal
-start behavior resumes after a later sample returns to Warning or Normal. The
-Performance card explains when this gate is active.
-
-Tart Oven never runs macOS `purge`: clearing the host file cache does not free
-active VM memory and can slow later disk reads. After a create or clone task,
-Tart Oven instead measures its own idle Go heap. It requests an in-process
-garbage collection and page release only when at least 64 MiB is idle but has
-not already been returned to macOS.
-
-Per-VM **Suspend** asks Tart to save an eligible suspendable VM and release its
-running host allocation. The VM must have been started with Tart's
-`--suspendable` option (add it to **Custom run arguments**) and the host/guest
-must support Tart save/restore; otherwise Tart Oven leaves the VM running and
-shows Tart's error. **Graceful shutdown** sends only the configured SSH
-shutdown command and leaves the VM running if it cannot confirm shutdown; it
-never falls back to `tart stop`. The existing **Stop** action and scheduled
-stopping behavior are unchanged. For a fully stopped VM, the editor suggests
-reducing Memory (MB) in small tested steps; changes apply on its next boot and
-are never made automatically.
-
 Cards and chart headers show **Unavailable** when the corresponding metric
 could not be collected in the latest sample. Other metrics in that sample can
 still be displayed; Tart Oven does not substitute an estimate for an
@@ -279,6 +257,117 @@ Performance data is collected in-process and displayed by the embedded
 dashboard. This feature needs no external runtime service, agent, dashboard
 asset, or shell-based host-stat command.
 
+## Memory safeguards and VM recovery
+
+Version 1.31 uses the macOS kernel-pressure reading from the Performance
+collector to prevent new VM work from making a critical host worse. It does
+not automatically stop a running VM or kill unrelated processes.
+
+### Critical-pressure start deferral
+
+When the latest **available** kernel-pressure reading is **Critical**, Tart
+Oven defers both scheduled and manual VM starts. A collection failure does not
+silently clear the gate: Tart Oven keeps using the last available pressure
+reading until a later available sample reports Warning or Normal.
+
+- Existing running VMs continue running.
+- The scheduler can still stop VMs whose normal run window has expired.
+- Manual **Run** requests are left stopped with a visible critical-pressure
+  explanation.
+- **Restart** still performs its existing Stop first. If pressure remains
+  Critical when the Run stage is reached, the VM stays stopped instead of
+  restarting.
+- The Performance pressure card says when new starts are being deferred.
+
+The collector samples once at startup and every 60 seconds, so recovery from a
+Critical reading is recognized on the next successful Warning or Normal
+sample.
+
+### Suspend a running VM
+
+**Suspend** asks Tart to save an eligible VM's machine state and end its
+running process, releasing the VM's active host-memory allocation without
+using the Stop fallback.
+
+Before using Suspend:
+
+1. Add `--suspendable` to **Configuration → Tart Settings → Custom run
+   arguments**.
+2. Start the VM with that setting. Adding it after the VM is already running
+   does not make the current run suspendable.
+3. Confirm the host, guest, and Tart version support VM save/restore. Current
+   Tart support requires a compatible macOS VM and host.
+
+Click **Suspend** on the running VM. While the snapshot is being written the
+VM shows **suspending**, then **suspended**. Click **Run** to restore and resume
+it. A suspended snapshot is deliberately protected from Stop, edit, rename,
+and delete operations. To turn it into an ordinary stopped VM, resume it and
+then use **Graceful shutdown** or the existing **Stop** action.
+
+If Tart rejects or cannot save the snapshot, Tart Oven leaves the VM marked
+running and displays Tart's error. It never converts a failed Suspend into a
+forced stop. Saved machine state also consumes disk space and remains tied to
+that local VM.
+
+### Graceful Shutdown versus Stop
+
+**Graceful shutdown** is a strict SSH-only action:
+
+1. Tart Oven resolves the VM address if necessary.
+2. It connects using the per-VM SSH credentials, or the saved defaults.
+3. It sends **Configuration → SSH & Commands → Shutdown command**.
+4. It waits up to **Shutdown wait timeout**, including address resolution and
+   the SSH command, for Tart to report that the VM stopped.
+
+If shutdown cannot be confirmed, Tart Oven removes the busy state, marks the
+VM running again, and displays the error. This action never runs `tart stop`
+and never kills the Tart process.
+
+The existing red **Stop** action is unchanged. It first attempts the configured
+SSH shutdown when possible, then falls back to `tart stop`, and finally kills
+the owned Tart process if the VM still refuses to exit. Scheduled expiry and
+daily-hours stopping continue using that existing Stop workflow.
+
+### Tart Oven heap release and `purge`
+
+Tart Oven never runs macOS `purge`. That command discards useful file cache; it
+does not release anonymous memory actively used by Tart VMs and can make later
+disk reads slower.
+
+After each create or clone task, Tart Oven measures its own Go heap. When at
+least 64 MiB is idle but has not already been returned to macOS, it calls
+`debug.FreeOSMemory()` to request an in-process garbage collection and return
+unused Go heap pages. Smaller amounts are left to Go's background scavenger.
+This can release memory owned by the Tart Oven process only—it cannot shrink a
+running VM, clear another process, or change the guest's configured RAM.
+
+### Lower memory for future VM boots
+
+For a fully stopped VM, open **VM Management → Edit a VM**. The editor shows a
+memory suggestion beside the current configuration. Lower **Memory (MB)** in
+small steps, apply the change, and test the next boot and workload. Tart
+validates the VM's minimum supported memory.
+
+Memory changes:
+
+- apply on the next boot;
+- never resize a running or suspended VM;
+- are never suggested as an automatic value or applied automatically; and
+- should be tested because reducing guest RAM can trade host capacity for
+  slower guest performance.
+
+### Troubleshooting memory recovery
+
+| Message or symptom | Meaning and next step |
+|---|---|
+| `not started: host is under critical memory pressure` | Wait for the next available Warning/Normal sample, or reduce host load. Running VMs are not stopped automatically. |
+| Suspend reports that the VM is not suspendable | Add `--suspendable` to Custom run arguments, then stop and start a new run before retrying. Confirm the host/guest support Tart save/restore. |
+| VM remains `suspended` | Click **Run** to restore it. Resume and stop it normally before editing, renaming, or deleting it. |
+| Graceful shutdown times out | Confirm the VM has an IP, Remote Login is enabled, saved credentials work, and the configured shutdown command is valid. The VM is deliberately left running. |
+| Graceful shutdown cannot confirm VM state | Tart's status probe failed. Refresh VM status and check the Tart logs; Tart Oven does not assume that a failed probe means the VM stopped. |
+| Memory remains high after create/clone | `debug.FreeOSMemory()` affects Tart Oven's unused Go heap only. Inspect the Performance page and running VMs; no cache purge is performed. |
+| Memory controls are unavailable for a VM | The VM must be fully stopped for memory editing, or running for Suspend/Graceful shutdown. |
+
 ## Build
 
 The application is built from Go source, the embedded `index.html` dashboard,
@@ -288,7 +377,7 @@ and supporting profile-transfer files.
 go build -o tart-oven
 ```
 
-That produces one static binary, `tart-oven`. State and configuration lives in
+That produces one static binary, `tart-oven`. State and configuration live in
 `~/.tart-oven/state.json` (created on first run).
 
 Before producing a release binary or package, run the complete Go and embedded
@@ -327,12 +416,29 @@ The .pkg installs:
 - `/Library/LaunchAgents/com.tartoven.agent.plist` — the auto-start agent
 
 …and its **postinstall** loads the agent in the logged-in user's GUI session and
-opens `http://127.0.0.1:9000` in the default browser. Double click on the .PKG file 
+opens `http://127.0.0.1:9000` in the default browser. Double-click the `.pkg` file
 or install it with:
 
 ```sh
 sudo installer -pkg TartOven-<version>.pkg -target /
 ```
+
+### Upgrade to 1.31
+
+Installing `TartOven-1.31.pkg` replaces the Tart Oven binary and reloads its
+LaunchAgent. The existing `~/.tart-oven/state.json`, VM storage, Jamf settings,
+and saved VM metadata are retained. The locally produced test package is
+unsigned, so install it from Terminal or distribute it through your management
+system:
+
+```sh
+sudo installer -pkg TartOven-1.31.pkg -target /
+```
+
+After installation, open `http://127.0.0.1:9000` and confirm the header reports
+`v1.31`. Add `--suspendable` to Custom run arguments only if you intend to use
+the new Suspend action; it is not required for performance monitoring,
+critical-pressure deferral, Graceful shutdown, or the existing Stop action.
 
 Signing (only needed for double-click installs outside Jamf — Jamf installs as
 root and bypasses Gatekeeper):
