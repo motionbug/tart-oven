@@ -41,7 +41,7 @@ import (
 //go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.36"
+const version = "1.37"
 
 // ---------------------------------------------------------------------------
 // Editable constants.

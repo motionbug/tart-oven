@@ -6,7 +6,7 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's native `Virtualization.framework`.
 
-Current release: **1.36**. [View Changelog](CHANGELOG.md) for full release notes and update details.
+Current release: **1.37**. [View Changelog](CHANGELOG.md) for full release notes and update details.
 
 ---
 

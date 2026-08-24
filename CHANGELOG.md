@@ -1,6 +1,8 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.36 moves the theme
+This file records user-visible changes to Tart Oven. Version 1.37 runs guest commands
+through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
+introduced one release earlier, and finishes removing Suspend. Version 1.36 moves the theme
 control into the header, simplifies host metrics onto a single source of truth, and
 adds opt-in automatic SSH key provisioning for guest VMs. Version 1.35 hardens the
 local API against cross-site requests, fixes several VM-lifecycle and Jamf/MDM
@@ -10,6 +12,56 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.37 — 2026-08-24
+
+### Guest Commands Run Through the Tart Guest Agent
+
+- **No SSH Required**: **Get info** and **Send command** now run through the Tart guest
+  agent over a virtual socket — no SSH, no key, no password, no `authorized_keys`, and no
+  guest networking. Exit codes, stdout/stderr, and `sudo` all behave as before. The
+  official `ghcr.io/cirruslabs/macos-*-base` images ship the agent preinstalled.
+- **SSH Fallback Retained**: Guests without the agent (for example `vanilla-*` images)
+  still work over SSH exactly as before. Each VM row shows whether **agent** or **ssh**
+  answered, so the active path is visible at a glance.
+- **More Reliable Boot IP Resolution**: VM IPs are now resolved with Tart's `agent`
+  resolver first — the one Tart documents as working reliably in all cases, and which
+  needs no guest network traffic — before the existing host ARP matching.
+- **Removed an Unusable Resolver Tier**: The `dhcp` resolver only works for VMs that are
+  *not* bridged, and Tart Oven always runs bridged, so that tier could never succeed. It
+  has been dropped from the chain.
+
+### Automatic SSH Key Provisioning Removed
+
+The feature added in 1.36 has been withdrawn. It existed to work around Tart Oven's own
+key-only SSH setting, which the guest agent makes unnecessary. It also had two defects
+worth naming: it re-provisioned every running VM roughly every 40 seconds instead of once,
+and it skipped `TEMPLATE` VMs — the exact VMs its own setup guide told you to use.
+
+The **Install the SSH key on new VMs automatically** setting is gone. Tart Oven still
+generates an SSH key when one is missing, for the SSH fallback, but never installs it into
+a guest by itself.
+
+### Fixes
+
+- **SSH Identity File**: No longer labeled "(optional)" — it is required whenever the SSH
+  fallback is used. A blank value is now repaired from the default on load, and a relative
+  path such as `tart-oven` is rejected instead of being silently resolved against the
+  server's working directory (`/` under the LaunchAgent), where it would have written a
+  private key.
+- **Editing Notes No Longer Clears a VM's SSH Username**: Saving notes from the dashboard
+  row previously wiped any custom per-VM SSH username, because the editor omits that
+  field. A blank submission now means "leave unchanged", matching the password field.
+- **Correct Guide Pointer**: The red status indicator pointed at Configuration; the SSH
+  setup guide is in VM Management.
+
+### Suspend Fully Removed
+
+The Suspend button was removed in 1.34, but the endpoint, the `suspending`/`suspended`
+states, and the guards around them remained — so a VM suspended by any means became
+unusable: no Resume, Stop disabled, and Edit, Rename, and Delete all refused. The endpoint,
+`doSuspend`, both states, and every guard are now gone, and any VM already stuck in that
+state can be stopped and reused normally.
 
 ## 1.36 — 2026-08-24
 

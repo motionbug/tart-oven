@@ -33,6 +33,7 @@
   .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
   .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--grey); }
   .stat-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+  .via-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--grey); margin-left: 6px; vertical-align: middle; }
   .theme-toggle { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; padding: 6px 9px; }
   .theme-toggle:hover { border-color: var(--cyan); }
   /* markdown (Helper Guide) */
@@ -525,7 +526,8 @@
 
     <div class="panel guide">
       <h2>SSH setup guide</h2>
-      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from the Default SSH username and SSH identity file in Configuration.</p>
+      <p class="muted"><b>Most VMs need none of this.</b> Tart Oven runs <b>Send command</b> and <b>Get info</b> through the <b>Tart guest agent</b> — no SSH, no key, no credentials — and the official <span class="mono">ghcr.io/cirruslabs/macos-*-base</span> images ship the agent preinstalled. The VM row shows <span class="mono">agent</span> when that path is in use.</p>
+      <p class="muted">Follow the steps below only for a guest <b>without</b> the agent (for example a <span class="mono">vanilla-*</span> image), where Tart Oven falls back to SSH. To add the agent to such an image instead, run <span class="mono">brew install openai/tools/tart-guest-agent</span> inside the guest once, before cloning it. Run the commands below <b>on the Mac mini</b> — the key stays on the mini.</p>
 
       <h3>1 · Generate a key (once)</h3>
       <div class="cmd"><code id="cmdKeygen"></code><button onclick="copyCmd('cmdKeygen', this)">Copy</button></div>
@@ -1344,9 +1346,14 @@ function sshCell(vm) {
   if (vm.state === "running") {
     const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
     if (checked) {
+      // Commands reach the guest either through the Tart guest agent (no SSH at
+      // all) or through the SSH fallback; show which one answered.
+      const via = vm.agentOk
+        ? '<span class="via-tag" title="commands run through the Tart guest agent">agent</span>'
+        : '<span class="via-tag" title="commands run over SSH">ssh</span>';
       return vm.sshOk
-        ? '<span class="ssh-dot green" title="SSH OK"></span>'
-        : '<span class="ssh-dot red" title="SSH failed — see the SSH setup guide in VM Management"></span>';
+        ? '<span class="ssh-dot green" title="guest command OK"></span>' + via
+        : '<span class="ssh-dot red" title="guest command failed — if this VM has no Tart guest agent, see the SSH setup guide in VM Management"></span>';
     }
     return '<span class="ssh-dot amber" title="checking SSH…"></span>';
   }
