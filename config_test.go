@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -261,5 +262,35 @@ func TestNotesUpdateKeepsPerVMSSHUserWhenOmitted(t *testing.T) {
 	m.routes().ServeHTTP(httptest.NewRecorder(), req)
 	if got := m.vms["vm1"].SSHUser; got != "tester" {
 		t.Fatalf("sshUser = %q, want it preserved", got)
+	}
+}
+
+func TestLoadRetiresTheLegacyJamfUserStatusCommand(t *testing.T) {
+	m := newTestManager(t)
+	body := `{"config":{"listen":"127.0.0.1:9000","statusCommand":` +
+		strconv.Quote(legacyJamfUserStatusCommand) + `},"vms":{},"history":[]}`
+	if err := os.WriteFile(m.statePath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.load()
+	if strings.Contains(m.cfg.StatusCommand, "no Jamf user") {
+		t.Fatalf("legacy status command survived load: %q", m.cfg.StatusCommand)
+	}
+	if m.cfg.StatusCommand != defaultConfig().StatusCommand {
+		t.Fatalf("status command = %q, want the new default", m.cfg.StatusCommand)
+	}
+}
+
+func TestLoadPreservesACustomisedStatusCommand(t *testing.T) {
+	m := newTestManager(t)
+	custom := `hostname; echo mine`
+	body := `{"config":{"listen":"127.0.0.1:9000","statusCommand":` +
+		strconv.Quote(custom) + `},"vms":{},"history":[]}`
+	if err := os.WriteFile(m.statePath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.load()
+	if m.cfg.StatusCommand != custom {
+		t.Fatalf("customised status command was overwritten: %q", m.cfg.StatusCommand)
 	}
 }

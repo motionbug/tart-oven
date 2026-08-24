@@ -322,6 +322,13 @@ func effectiveSSHCredentials(cfg Config, vm *VM) (string, string) {
 	return user, password
 }
 
+// legacyJamfUserStatusCommand is the status command shipped before the MDM column
+// existed. Its trailing lookup printed "(no Jamf user)" whenever the read failed for
+// any reason — including on VMs that were enrolled but simply had no username-variable
+// profile scoped to them. The MDM column answers that question properly now. Replaced
+// on load only when a stored command matches this byte-for-byte.
+const legacyJamfUserStatusCommand = `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`
+
 func defaultConfig() Config {
 	return Config{
 		Listen:                  "127.0.0.1:9000",
@@ -344,7 +351,7 @@ func defaultConfig() Config {
 		SSHKey:                  "~/.ssh/tart-oven",
 		SSHFallbackEnabled:      true,
 		SSHTimeoutSec:           15,
-		StatusCommand:           `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
+		StatusCommand:           `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion`,
 		RunArgs:                 "",
 		NetPriority:             "wifi",
 		BootTimeoutSec:          60,
@@ -610,6 +617,9 @@ func (m *Manager) load() {
 		m.cfg.SSHTimeoutSec = d.SSHTimeoutSec
 	}
 	if m.cfg.StatusCommand == "" {
+		m.cfg.StatusCommand = d.StatusCommand
+	}
+	if m.cfg.StatusCommand == legacyJamfUserStatusCommand {
 		m.cfg.StatusCommand = d.StatusCommand
 	}
 	if !validSSHKeyPath(m.cfg.SSHKey) {
