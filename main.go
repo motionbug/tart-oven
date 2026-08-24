@@ -428,6 +428,7 @@ type VM struct {
 	LastError string `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
+	AgentOK  bool `json:"agentOk"` // guest agent answered the last command
 	Template bool `json:"template"`
 	Excluded bool `json:"excluded"`
 	Busy     bool `json:"busy"`
@@ -1787,19 +1788,20 @@ func sshOutcome(res execResult) (bool, string) {
 	return ok, info
 }
 
-// sshExec runs command on the guest over SSH. If sudoPassword is non-empty it
-// is fed to `sudo -S` on the VM so commands that need sudo work without a TTY;
-// the password itself is never logged. The Send Command panel passes a
-// per-request value that is never persisted.
+// sshExec runs command in the guest, preferring the Tart guest agent and falling
+// back to SSH for images without it. The name is retained because it is the
+// established entry point for Get info, Send command, and the boot probe; the
+// transport is chosen per call by execInGuest. If sudoPassword is non-empty it is
+// fed to `sudo -S` in the guest so commands needing sudo work without a TTY; the
+// password itself is never logged.
+//
+// The deadline is deliberately generous and independent of SSHTimeoutSec, which is
+// the SSH *connect* timeout: a small connect timeout must not kill a legitimately
+// long command such as `softwareupdate`.
 func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
-	// SSHTimeoutSec is the SSH *connect* timeout (applied as ConnectTimeout in
-	// sshExecContext); it must not double as a whole-command deadline, or a
-	// small connect timeout would kill a legitimately long command such as
-	// `softwareupdate`. A dead connection is still caught within ~15s by the
-	// ServerAlive keepalives, so this outer command deadline can be generous.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	return m.sshExecContext(ctx, name, command, sudoPassword)
+	return m.execInGuest(ctx, name, command, sudoPassword)
 }
 
 func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPassword string) execResult {
@@ -1860,8 +1862,7 @@ func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPasswor
 	// (The password is only ever on stdin — never in the command or the logs.)
 	remoteCmd := command
 	if sudoPassword != "" {
-		sudoRe := regexp.MustCompile(`(^|[\s;&|(])sudo(\s)`)
-		remoteCmd = sudoRe.ReplaceAllString(command, `${1}sudo -S -p ''${2}`)
+		remoteCmd = rewriteSudoForStdin(command)
 		m.logln("ssh sudo exec on %s: %s", name, remoteCmd)
 	}
 	args = append(args, "--", fmt.Sprintf("%s@%s", user, ip), remoteCmd)
