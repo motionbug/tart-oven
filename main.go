@@ -250,17 +250,18 @@ type Config struct {
 	JamfBaseURL             string        `json:"jamfBaseUrl,omitempty"`
 	JamfInvitationCode      string        `json:"jamfInvitationCode,omitempty"`
 	SSHUser                 string        `json:"sshUser"`
-	SSHPassword             string        `json:"sshPassword"`     // guest SSH/sudo password; write-only
-	SSHKey                  string        `json:"sshKey"`          // optional identity file path
-	SSHTimeoutSec           int           `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand           string        `json:"statusCommand"`   // command for "Get info"
-	RunArgs                 string        `json:"runArgs"`         // extra args appended to every `tart run`
-	NetPriority             string        `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec          int           `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
-	HistoryDays             int           `json:"historyDays"`     // run-history retention in days
-	LogPath                 string        `json:"logPath"`         // path to log file (rotation at 5MB)
-	ServerLabel             string        `json:"serverLabel"`     // custom label to identify this server instance
-	ShowRunningOnly         bool          `json:"showRunningOnly"` // dashboard filter: show only running VMs
+	SSHPassword             string        `json:"sshPassword"`       // guest SSH/sudo password; write-only
+	SSHKey                  string        `json:"sshKey"`            // optional identity file path
+	AutoInstallSSHKey       bool          `json:"autoInstallSSHKey"` // push the SSH public key to guests automatically
+	SSHTimeoutSec           int           `json:"sshTimeoutSec"`     // ssh connect timeout
+	StatusCommand           string        `json:"statusCommand"`     // command for "Get info"
+	RunArgs                 string        `json:"runArgs"`           // extra args appended to every `tart run`
+	NetPriority             string        `json:"netPriority"`       // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec          int           `json:"bootTimeoutSec"`    // wait for IP before declaring boot failure
+	HistoryDays             int           `json:"historyDays"`       // run-history retention in days
+	LogPath                 string        `json:"logPath"`           // path to log file (rotation at 5MB)
+	ServerLabel             string        `json:"serverLabel"`       // custom label to identify this server instance
+	ShowRunningOnly         bool          `json:"showRunningOnly"`   // dashboard filter: show only running VMs
 }
 
 type configView struct {
@@ -420,7 +421,11 @@ type VM struct {
 	Tags         []string  `json:"tags,omitempty"`         // user-defined tags for grouping/filtering
 	SSHUser      string    `json:"sshUser,omitempty"`      // custom SSH user (overrides default)
 	SSHPassword  string    `json:"sshPassword,omitempty"`  // custom SSH/sudo password; persisted, but masked before every client-facing response
-	LastError    string    `json:"lastError,omitempty"`
+
+	SSHKeyInstalledAt time.Time `json:"sshKeyInstalledAt,omitempty"` // when the public key was last installed
+	SSHKeyError       string    `json:"sshKeyError,omitempty"`       // last provisioning failure, cleared on success
+
+	LastError string `json:"lastError,omitempty"`
 
 	// Computed for the UI in stateSnapshot (not persisted meaningfully).
 	Template bool `json:"template"`
@@ -477,6 +482,7 @@ type Manager struct {
 	statePath            string
 	reload               chan struct{} // poke the scheduler when interval changes
 	mdmCopier            mdmProfileCopier
+	keyDialer            remoteProfileDialer // password-auth SFTP dialer for SSH key provisioning
 	mdmResolveIP         mdmIPResolver
 	tartOperation        func(context.Context, string, ...string) ([]byte, error)
 	tartOutputOperation  func(context.Context, string, ...string) (string, error)
@@ -3224,6 +3230,12 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 			m.cfg.SSHKey = v
 		}
 	}
+	if raw, ok := fields["autoInstallSSHKey"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.AutoInstallSSHKey = v
+		}
+	}
 	if raw, ok := fields["sshTimeoutSec"]; ok {
 		var v int
 		if json.Unmarshal(raw, &v) == nil && v >= 1 {
@@ -3425,6 +3437,7 @@ func main() {
 			m.checkStorage()
 			m.healStuck(maxOpAge)
 			m.reconcile()
+			m.provisionSSHKeys()
 			m.broadcast()
 		}
 	}()

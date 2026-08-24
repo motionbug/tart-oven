@@ -229,4 +229,16 @@ func TestHandleConfigJamfProfiles(t *testing.T) {
 	}
 }
 
-
+func TestConfigMergeAcceptsAutoInstallSSHKey(t *testing.T) {
+	m := &Manager{cfg: defaultConfig(), vms: map[string]*VM{}, busy: map[string]bool{},
+		statePath: filepath.Join(t.TempDir(), "state.json"), reload: make(chan struct{}, 1)}
+	if m.cfg.AutoInstallSSHKey {
+		t.Fatal("auto key install must default to off")
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/config",
+		strings.NewReader(`{"autoInstallSSHKey":true}`))
+	m.handleConfig(httptest.NewRecorder(), request)
+	if !m.cfg.AutoInstallSSHKey {
+		t.Fatal("autoInstallSSHKey was not merged")
+	}
+}
