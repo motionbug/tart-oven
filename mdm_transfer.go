@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -225,7 +227,11 @@ type sftpRemoteProfileFS struct {
 }
 
 func (f *sftpRemoteProfileFS) WriteFile(path string, data []byte, perm fs.FileMode) error {
-	file, err := f.openFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
+	cleaned := filepath.Clean(path)
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return fmt.Errorf("invalid path traversal: %s", path)
+	}
+	file, err := f.openFile(cleaned, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
 	if err != nil {
 		return fmt.Errorf("open remote file: %w", err)
 	}
@@ -251,14 +257,18 @@ func (f *sftpRemoteProfileFS) WriteFile(path string, data []byte, perm fs.FileMo
 	if writeErr != nil || closeErr != nil {
 		return errors.Join(writeErr, closeErr)
 	}
-	if err := f.chmod(path, perm); err != nil {
+	if err := f.chmod(cleaned, perm); err != nil {
 		return fmt.Errorf("set remote file mode: %w", err)
 	}
 	return nil
 }
 
 func (f *sftpRemoteProfileFS) ReadFile(path string) ([]byte, error) {
-	return f.readFile(path)
+	cleaned := filepath.Clean(path)
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return nil, fmt.Errorf("invalid path traversal: %s", path)
+	}
+	return f.readFile(cleaned)
 }
 
 func (f *sftpRemoteProfileFS) Close() error {

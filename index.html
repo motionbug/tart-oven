@@ -48,6 +48,13 @@
   .markdown table.md-table { border-collapse: collapse; margin: 10px 0; width: 100%; }
   .markdown .md-table th, .markdown .md-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 12px; vertical-align: top; }
   .markdown .md-table th { background: var(--panel2); }
+  .markdown .callout { padding: 10px 14px; margin: 12px 0; border-radius: 6px; border-left: 4px solid var(--accent); font-size: 13px; line-height: 1.5; background: var(--panel2); }
+  .markdown .callout strong { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; margin-right: 6px; }
+  .markdown .callout-note { background: rgba(79,140,255,.1); border-color: var(--accent); }
+  .markdown .callout-tip { background: rgba(46,204,113,.1); border-color: var(--green); }
+  .markdown .callout-important { background: rgba(155,89,182,.1); border-color: #9b59b6; }
+  .markdown .callout-warning { background: rgba(255,183,77,.15); border-color: var(--amber); }
+  .markdown .callout-caution { background: rgba(255,92,92,.15); border-color: var(--red); }
   .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); font-size: 13px; }
   /* Apple-style toggle switch */
   .toggle { position: relative; width: 42px; height: 26px; flex-shrink: 0; }
@@ -325,26 +332,6 @@
       <div id="console"></div>
     </div>
 
-    <!-- VM details edit modal (notes + tags) -->
-    <div id="notesModal" class="modal hidden">
-      <div class="modal-backdrop"></div>
-      <div class="modal-content">
-        <h3>Edit <span id="notesVmName"></span></h3>
-        <div class="field" style="margin-bottom:12px">
-          <label>Tags (comma-separated)</label>
-          <input type="text" id="tagsInput" placeholder="e.g. demo, production, test">
-        </div>
-        <div class="field">
-          <label>Notes</label>
-          <textarea id="notesText" rows="4" placeholder="Enter notes for this VM…"></textarea>
-        </div>
-        <div class="modal-actions">
-          <button id="notesSave">Save</button>
-          <button id="notesCancel" class="ghost">Cancel</button>
-        </div>
-      </div>
-    </div>
-
   </div>
 
   <!-- ================= TAB 2: PERFORMANCE ================= -->
@@ -606,6 +593,39 @@
   <div id="tab-guide" class="tab">
     <div class="panel">
       <div id="readme" class="markdown muted">Loading guide…</div>
+    </div>
+</div>
+
+<!-- VM details edit modal (notes + tags) -->
+<div id="notesModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content">
+    <h3>Edit <span id="notesVmName"></span></h3>
+    <div class="field" style="margin-bottom:12px">
+      <label>Tags (comma-separated)</label>
+      <input type="text" id="tagsInput" placeholder="e.g. demo, production, test">
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="notesText" rows="4" placeholder="Enter notes for this VM…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button id="notesSave">Save</button>
+      <button id="notesCancel" class="ghost">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Changelog Modal -->
+<div id="changelogModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content" style="width: 780px; max-width: 92vw; max-height: 85vh; display: flex; flex-direction: column; padding: 0;">
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border);">
+      <h3 style="margin: 0; font-size: 16px; font-weight: 600;">📜 Tart Oven Release Notes & Changelog</h3>
+      <button id="changelogClose" class="ghost" style="padding: 4px 10px; font-size: 16px; line-height: 1;" title="Close">✕</button>
+    </div>
+    <div id="changelogContent" class="markdown" style="padding: 20px; overflow-y: auto; max-height: calc(85vh - 70px); font-size: 13px;">
+      <p class="muted">Loading changelog…</p>
     </div>
   </div>
 </div>
@@ -1295,7 +1315,6 @@ function renderTable(vms) {
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + stopDisabled + '>Stop</button>' +
         '<button class="ghost" onclick="act(\'suspend\',\'' + n + '\')"' + notRunning + busy + ' title="Save eligible VM state and release its running host memory">Suspend</button>' +
-        '<button class="ghost" onclick="act(\'graceful-shutdown\',\'' + n + '\')"' + notRunning + busy + ' title="Ask macOS to shut down over SSH; never force-stops on failure">Graceful shutdown</button>' +
         '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
         '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
         '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
@@ -1825,10 +1844,15 @@ async function loadReadme() {
 // links, lists, tables, paragraphs) — enough for the README, no dependencies.
 function renderMarkdown(md) {
   const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const inline = t => esc(t)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) => {
+      if (href === "CHANGELOG.md") return `<a href="/CHANGELOG.md" target="_blank" rel="noopener">${label}</a>`;
+      if (href.startsWith("#")) return `<a href="${href}">${label}</a>`;
+      return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+    });
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   let out = "", i = 0;
   while (i < lines.length) {
@@ -1839,6 +1863,18 @@ function renderMarkdown(md) {
       i++;
       out += '<pre class="md-code">' + esc(code.replace(/\n$/, "")) + "</pre>"; continue;
     }
+    if (/^>\s+\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.test(line)) {
+      const type = line.match(/^>\s+\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i)[1].toUpperCase();
+      i++;
+      let calloutContent = "";
+      while (i < lines.length && /^>\s*(.*)$/.test(lines[i])) {
+        const m = lines[i].match(/^>\s*(.*)$/);
+        calloutContent += (calloutContent ? " " : "") + m[1];
+        i++;
+      }
+      out += '<div class="callout callout-' + type.toLowerCase() + '"><strong>' + esc(type) + '</strong>: ' + inline(calloutContent) + '</div>';
+      continue;
+    }
     if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:|-]*-[\s:|-]*$/.test(lines[i + 1])) {
       const row = r => r.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim());
       const head = row(line); i += 2; const body = [];
@@ -1848,7 +1884,14 @@ function renderMarkdown(md) {
       continue;
     }
     const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { const n = h[1].length; out += "<h" + n + ">" + inline(h[2]) + "</h" + n + ">"; i++; continue; }
+    if (h) {
+      const n = h[1].length;
+      const title = h[2];
+      const headingId = slug(title);
+      out += '<h' + n + ' id="' + headingId + '">' + inline(title) + '</h' + n + '>';
+      i++;
+      continue;
+    }
     if (/^\s*[-*]\s+/.test(line)) {
       out += "<ul>";
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { out += "<li>" + inline(lines[i].replace(/^\s*[-*]\s+/, "")) + "</li>"; i++; }
@@ -1861,7 +1904,7 @@ function renderMarkdown(md) {
     }
     if (line.trim() === "") { i++; continue; }
     let p = line; i++;
-    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s|^```|^\s*[-*]\s+|^\s*\d+\.\s+/.test(lines[i]) && !lines[i].includes("|")) { p += " " + lines[i]; i++; }
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s|^```|^>\s+\[!|^\s*[-*]\s+|^\s*\d+\.\s+/.test(lines[i]) && !lines[i].includes("|")) { p += " " + lines[i]; i++; }
     out += "<p>" + inline(p) + "</p>";
   }
   return out;
@@ -1887,6 +1930,42 @@ window.addEventListener("resize", () => {
   performanceResizeTimer = setTimeout(() => {
     if (activeTab === "performance" && latestPerformanceSnapshot) renderPerformance(latestPerformanceSnapshot);
   }, 100);
+});
+
+async function openChangelogModal() {
+  const modal = document.getElementById("changelogModal");
+  const contentEl = document.getElementById("changelogContent");
+  modal.classList.remove("hidden");
+  try {
+    const res = await api("/api/changelog");
+    contentEl.innerHTML = renderMarkdown(await res.text());
+  } catch (err) {
+    contentEl.innerHTML = `<p class="bad">Failed to load changelog: ${esc(err.message)}</p>`;
+  }
+}
+
+function closeChangelogModal() {
+  document.getElementById("changelogModal").classList.add("hidden");
+}
+
+document.getElementById("changelogClose").onclick = closeChangelogModal;
+document.querySelector("#changelogModal .modal-backdrop").onclick = closeChangelogModal;
+
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a");
+  if (!a) return;
+  const href = a.getAttribute("href");
+  if (href === "CHANGELOG.md" || href === "/CHANGELOG.md") {
+    e.preventDefault();
+    openChangelogModal();
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeChangelogModal();
+    closeEditModal();
+  }
 });
 
 connect();

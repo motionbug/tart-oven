@@ -35,6 +35,7 @@ settings.local.json
 .env
 .DS_Store
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# Agent & worktree directories
+.agents/
+.worktrees/
+

@@ -21,23 +21,23 @@ const performanceHistoryLimit = 1440
 // platform metric was available when the sample was collected.
 type PerformanceSample struct {
 	Timestamp               time.Time `json:"timestamp"`
-	CPUPercent              float64   `json:"cpuPercent"`
-	CPUAvailable            bool      `json:"cpuAvailable"`
 	MemoryUsedBytes         uint64    `json:"memoryUsedBytes"`
 	MemoryTotalBytes        uint64    `json:"memoryTotalBytes"`
-	MemoryAvailable         bool      `json:"memoryAvailable"`
-	MemoryPressure          string    `json:"memoryPressure"`
-	PressureAvailable       bool      `json:"pressureAvailable"`
 	SystemDiskUsedBytes     uint64    `json:"systemDiskUsedBytes"`
 	SystemDiskTotalBytes    uint64    `json:"systemDiskTotalBytes"`
-	SystemDiskAvailable     bool      `json:"systemDiskAvailable"`
 	VMDiskUsedBytes         uint64    `json:"vmDiskUsedBytes"`
 	VMDiskTotalBytes        uint64    `json:"vmDiskTotalBytes"`
-	VMDiskAvailable         bool      `json:"vmDiskAvailable"`
+	UptimeSeconds           uint64    `json:"uptimeSeconds"`
+	CPUPercent              float64   `json:"cpuPercent"`
 	DiskReadBytesPerSecond  float64   `json:"diskReadBytesPerSecond"`
 	DiskWriteBytesPerSecond float64   `json:"diskWriteBytesPerSecond"`
+	MemoryPressure          string    `json:"memoryPressure"`
+	CPUAvailable            bool      `json:"cpuAvailable"`
+	MemoryAvailable         bool      `json:"memoryAvailable"`
+	PressureAvailable       bool      `json:"pressureAvailable"`
+	SystemDiskAvailable     bool      `json:"systemDiskAvailable"`
+	VMDiskAvailable         bool      `json:"vmDiskAvailable"`
 	DiskIOAvailable         bool      `json:"diskIOAvailable"`
-	UptimeSeconds           uint64    `json:"uptimeSeconds"`
 	UptimeAvailable         bool      `json:"uptimeAvailable"`
 }
 

@@ -38,10 +38,10 @@ import (
 	"golang.org/x/net/route"
 )
 
-//go:embed index.html README.md
+//go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.32"
+const version = "1.34"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -150,11 +150,23 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if w.file == nil {
+		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return 0, err
+		}
+		w.file = f
+	}
+
 	fi, err := w.file.Stat()
 	if err == nil && fi.Size()+int64(len(p)) > w.maxBytes {
-		w.file.Close()
-		os.Rename(w.path, w.path+".1")
-		w.file, _ = os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		_ = w.file.Close()
+		_ = os.Rename(w.path, w.path+".1")
+		newFile, openErr := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if openErr != nil {
+			return 0, openErr
+		}
+		w.file = newFile
 	}
 	return w.file.Write(p)
 }
@@ -1258,10 +1270,12 @@ func (m *Manager) doRun(name, trigger string) {
 	m.mu.Lock()
 	m.runningCmds[name] = cmd
 	m.mu.Unlock()
-	go func() {
-		werr := cmd.Wait()
+	go func(targetCmd *exec.Cmd) {
+		werr := targetCmd.Wait()
 		m.mu.Lock()
-		delete(m.runningCmds, name)
+		if m.runningCmds[name] == targetCmd {
+			delete(m.runningCmds, name)
+		}
 		busy := m.busy[name]
 		m.mu.Unlock()
 		if werr != nil {
@@ -1275,7 +1289,7 @@ func (m *Manager) doRun(name, trigger string) {
 			m.reconcile()
 			m.broadcast()
 		}
-	}()
+	}(cmd)
 
 	if jamf {
 		go runJamf()
@@ -1377,79 +1391,34 @@ func (m *Manager) doStop(name string) {
 	vm.State = "stopping"
 	home := m.cfg.VMStoragePath
 	jamf := m.cfg.JamfRecon
-	shutdownCmd := m.cfg.ShutdownCommand
-	shutdownWait := time.Duration(m.cfg.ShutdownWaitSec) * time.Second
-	ip := vm.IP
-	sshOK := vm.SSHOK
-	sudoPassword := vm.SSHPassword
-	if sudoPassword == "" {
-		sudoPassword = m.cfg.SSHPassword
-	}
 	m.mu.Unlock()
 	m.broadcast()
 
-	stopped := false
-
-	// 1) Preferred: clean macOS shutdown over SSH, when SSH is known to work.
-	//    The connection usually drops as the guest powers off, so we ignore the
-	//    command result and poll for the VM to actually stop, up to shutdownWait.
-	//    The configured sudo password (per-VM override, else the default) is
-	//    fed to `sudo -S` so `sudo shutdown -h now` never needs an interactive
-	//    prompt regardless of what the guest's admin password actually is.
-	if ip != "" && sshOK && strings.TrimSpace(shutdownCmd) != "" {
-		m.logln("$ ssh %s %q", name, shutdownCmd)
-		res := m.sshExec(name, shutdownCmd, sudoPassword)
-		// Distinguish "couldn't even connect/run" from "ran, connection dropped".
-		connectFail := strings.Contains(res.Stderr, "Permission denied") ||
-			strings.Contains(res.Stderr, "Connection refused") ||
-			strings.Contains(res.Stderr, "Could not resolve") ||
-			strings.Contains(res.Stderr, "Operation timed out") ||
-			strings.Contains(res.Stderr, "No route to host")
-		if connectFail {
-			m.logln("ssh shutdown %s could not run (%s); falling back to tart stop", name, lastLine(res.Stderr))
-		} else {
-			deadline := time.Now().Add(shutdownWait)
-			for time.Now().Before(deadline) {
-				time.Sleep(2 * time.Second)
-				if !m.isRunning(name) {
-					stopped = true
-					break
-				}
-			}
-			if stopped {
-				m.logln("%s shut down cleanly via SSH", name)
-			} else {
-				m.logln("%s did not stop via SSH within %s; falling back to tart stop", name, shutdownWait)
-			}
-		}
+	m.logln("$ tart stop %s -t 5", name)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	out, err := m.tartCmdCtx(ctx, home, "stop", name, "-t", "5").CombinedOutput()
+	cancel()
+	if err != nil {
+		m.logln("tart stop %s → %v%s", name, err, prefixIfNotEmpty(" ", strings.TrimSpace(string(out))))
 	}
 
-	// 2) Fallback: tart stop, then poll. If it refuses to die, force-kill.
+	stopped := false
+	for i := 0; i < 6; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if !m.isRunning(name) {
+			stopped = true
+			break
+		}
+	}
 	if !stopped {
-		m.logln("$ tart stop %s -t 30", name)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		out, err := m.tartCmdCtx(ctx, home, "stop", name, "-t", "30").CombinedOutput()
-		cancel()
-		if err != nil {
-			m.logln("tart stop %s → %v%s", name, err, prefixIfNotEmpty(" ", strings.TrimSpace(string(out))))
-		}
-		for i := 0; i < 16; i++ {
-			time.Sleep(2 * time.Second)
-			if !m.isRunning(name) {
-				stopped = true
-				break
-			}
-		}
-		if !stopped {
-			m.logln("%s still running after graceful stop; forcing", name)
-			m.mu.Lock()
-			cmd := m.runningCmds[name]
-			m.mu.Unlock()
-			if cmd != nil && cmd.Process != nil {
-				cmd.Process.Kill()
-			} else {
-				m.tartCmd(home, "stop", name, "-t", "5").Run()
-			}
+		m.logln("%s still running; forcing process termination", name)
+		m.mu.Lock()
+		cmd := m.runningCmds[name]
+		m.mu.Unlock()
+		if cmd != nil && cmd.Process != nil {
+			cmd.Process.Kill()
+		} else {
+			m.tartCmd(home, "stop", name, "-t", "1").Run()
 		}
 	}
 
@@ -1553,80 +1522,6 @@ func (m *Manager) doSuspend(name string) {
 
 	m.finishVMRun(name, "suspended")
 	m.logln("suspended %s", name)
-}
-
-// doGracefulShutdown sends only the configured guest shutdown command. Unlike
-// doStop, it never invokes `tart stop` or kills the Tart process on failure.
-func (m *Manager) doGracefulShutdown(name string) {
-	m.mu.Lock()
-	vm := m.vms[name]
-	if vm == nil || vm.State != "running" || m.busy[name] {
-		m.mu.Unlock()
-		return
-	}
-	command := strings.TrimSpace(m.cfg.ShutdownCommand)
-	if command == "" {
-		vm.LastError = "graceful shutdown unavailable: configure a shutdown command"
-		m.mu.Unlock()
-		m.broadcast()
-		return
-	}
-	password := vm.SSHPassword
-	if password == "" {
-		password = m.cfg.SSHPassword
-	}
-	wait := time.Duration(m.cfg.ShutdownWaitSec) * time.Second
-	if wait <= 0 {
-		wait = 60 * time.Second
-	}
-	m.setBusy(name, true)
-	vm.State = "stopping"
-	vm.LastError = ""
-	m.mu.Unlock()
-	m.broadcast()
-
-	m.logln("$ ssh %s %q (graceful shutdown only)", name, command)
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
-	deadline, _ := ctx.Deadline()
-	result := m.runSSHOperation(ctx, name, command, password)
-	cancel()
-	var probeErr error
-	for {
-		running, err := m.probeVMRunning(name)
-		if err != nil {
-			probeErr = err
-			break
-		}
-		if !running {
-			m.finishVMRun(name, "stopped")
-			m.logln("%s shut down cleanly via SSH", name)
-			return
-		}
-		if !time.Now().Before(deadline) {
-			break
-		}
-		time.Sleep(min(2*time.Second, time.Until(deadline)))
-	}
-
-	detail := strings.TrimSpace(result.Error)
-	if detail == "" {
-		detail = lastLine(result.Stderr)
-	}
-	message := "graceful shutdown timed out; VM was left running"
-	if probeErr != nil {
-		message = "graceful shutdown could not confirm shutdown; VM was left running: " + probeErr.Error()
-	} else if detail != "" {
-		message += ": " + detail
-	}
-	m.mu.Lock()
-	if vm := m.vms[name]; vm != nil {
-		vm.State = "running"
-		vm.LastError = message
-	}
-	m.setBusy(name, false)
-	m.mu.Unlock()
-	m.broadcast()
-	m.logln("graceful shutdown %s failed: %s", name, message)
 }
 
 func (m *Manager) vmRunningState(name string) (bool, error) {
@@ -1803,7 +1698,15 @@ func sshOutcome(res execResult) (bool, string) {
 // never persisted, while doStop passes the persisted per-VM/default
 // Config.SSHPassword so a clean shutdown never needs an interactive prompt.
 func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
-	return m.sshExecContext(context.Background(), name, command, sudoPassword)
+	timeout := 120 * time.Second
+	m.mu.Lock()
+	if m.cfg.SSHTimeoutSec > 0 {
+		timeout = time.Duration(m.cfg.SSHTimeoutSec+15) * time.Second
+	}
+	m.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return m.sshExecContext(ctx, name, command, sudoPassword)
 }
 
 func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPassword string) execResult {
@@ -1835,6 +1738,9 @@ func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPasswor
 	if ip == "" {
 		return execResult{Error: "no IP for VM"}
 	}
+	if user == "" {
+		user = "admin"
+	}
 
 	args := []string{
 		"-o", "BatchMode=yes", // non-interactive: key auth only, never prompt
@@ -1864,7 +1770,7 @@ func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPasswor
 		remoteCmd = sudoRe.ReplaceAllString(command, `${1}sudo -S -p ''${2}`)
 		m.logln("ssh sudo exec on %s: %s", name, remoteCmd)
 	}
-	args = append(args, fmt.Sprintf("%s@%s", user, ip), remoteCmd)
+	args = append(args, "--", fmt.Sprintf("%s@%s", user, ip), remoteCmd)
 
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	if sudoPassword != "" {
@@ -2521,6 +2427,26 @@ func (m *Manager) routes() *http.ServeMux {
 		w.Write(b)
 	})
 
+	mux.HandleFunc("/api/changelog", func(w http.ResponseWriter, r *http.Request) {
+		b, err := content.ReadFile("CHANGELOG.md")
+		if err != nil {
+			http.Error(w, "changelog not embedded", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Write(b)
+	})
+
+	mux.HandleFunc("/CHANGELOG.md", func(w http.ResponseWriter, r *http.Request) {
+		b, err := content.ReadFile("CHANGELOG.md")
+		if err != nil {
+			http.Error(w, "changelog not embedded", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write(b)
+	})
+
 	mux.HandleFunc("/api/vms", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, m.snapshot())
 	})
@@ -2558,16 +2484,6 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		go m.doSuspend(name)
-		writeJSON(w, map[string]bool{"ok": true})
-	})
-
-	mux.HandleFunc("/api/graceful-shutdown", func(w http.ResponseWriter, r *http.Request) {
-		name, err := decodeName(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		go m.doGracefulShutdown(name)
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 

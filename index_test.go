@@ -247,8 +247,8 @@ func TestDashboardContainsMemoryRecoveryActions(t *testing.T) {
 	}
 	html := string(b)
 	for _, want := range []string{
-		`act(\'suspend\'`, `act(\'graceful-shutdown\'`,
-		`/api/" + kind`, `Suspend`, `Graceful shutdown`,
+		`act(\'suspend\'`,
+		`/api/" + kind`, `Suspend`,
 		`New VM starts are deferred while pressure is critical`,
 		`id="memorySuggestion"`, `Lowering memory applies on the next boot`,
 	} {
@@ -268,7 +268,6 @@ func TestMemoryRecoveryActionsOnlyEnableForRunningVMs(t *testing.T) {
 		`const notRunning = vm.state !== "running" ? " disabled" : "";`,
 		`const stopDisabled = vm.state === "suspended" ? " disabled" : busy;`,
 		`act(\'suspend\'`, `+ notRunning +`,
-		`act(\'graceful-shutdown\'`,
 	} {
 		if !strings.Contains(renderTable, want) {
 			t.Errorf("running-only action guard missing %q", want)

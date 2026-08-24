@@ -61,11 +61,23 @@ func generateMDMProfile(input mdmProfileInput, random io.Reader) ([]byte, string
 	if err != nil {
 		return nil, "", fmt.Errorf("generate profile UUID: %w", err)
 	}
+	escURL, err := escapeMDMProfileText(input.BaseURL + "/enroll/profile")
+	if err != nil {
+		return nil, "", fmt.Errorf("escape profile URL: %w", err)
+	}
+	escCode, err := escapeMDMProfileText(input.InvitationCode)
+	if err != nil {
+		return nil, "", fmt.Errorf("escape invitation code: %w", err)
+	}
+	escUUID, err := escapeMDMProfileText(payloadUUID)
+	if err != nil {
+		return nil, "", fmt.Errorf("escape payload UUID: %w", err)
+	}
 	profile := []byte(fmt.Sprintf(
 		mdmProfileTemplate,
-		escapeMDMProfileText(input.BaseURL+"/enroll/profile"),
-		escapeMDMProfileText(input.InvitationCode),
-		escapeMDMProfileText(payloadUUID),
+		escURL,
+		escCode,
+		escUUID,
 	))
 	if err := validateMDMProfile(profile, input, payloadUUID); err != nil {
 		return nil, "", fmt.Errorf("validate generated profile: %w", err)
@@ -83,12 +95,12 @@ func newRandomUUID(random io.Reader) (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value[:4], value[4:6], value[6:8], value[8:10], value[10:]), nil
 }
 
-func escapeMDMProfileText(value string) string {
+func escapeMDMProfileText(value string) (string, error) {
 	var escaped bytes.Buffer
 	if err := xml.EscapeText(&escaped, []byte(value)); err != nil {
-		panic(err)
+		return "", fmt.Errorf("xml escape failed: %w", err)
 	}
-	return escaped.String()
+	return escaped.String(), nil
 }
 
 func validateMDMProfile(profile []byte, input mdmProfileInput, payloadUUID string) error {

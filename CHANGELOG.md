@@ -1,11 +1,59 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.32 separates OCI
-images from runnable local VMs and excludes them from scheduling by default.
-Version 1.31 adds memory safeguards and recovery controls. Version 1.30 adds
-native host performance monitoring. Version 1.29 contains the Jamf base-image
-preparation work and VM boot reliability fixes developed on the Motionbug fork
-after the v1.27 baseline.
+This file records user-visible changes to Tart Oven. Version 1.34 streamlines
+VM teardown by eliminating slow SSH graceful shutdown in favor of fast, direct
+hard stops for ephemeral testing farm workflows. Version 1.33 introduces
+robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
+Version 1.32 separates OCI images from runnable local VMs and excludes them from
+scheduling by default.
+
+## 1.34 — 2026-08-24
+
+### Ephemeral VM Lifecycle Streamlining & Fast Hard Stop
+
+- **Removed Slow SSH Graceful Shutdown**: Removed the `Graceful shutdown` button
+  and `/api/graceful-shutdown` endpoint. In ephemeral test environments, waiting
+  30–60 seconds for internal guest OS teardown over SSH causes unnecessary delays
+  and fails if the guest kernel is unresponsive.
+- **Direct Fast Stop (`tart stop -t 5`)**: The standard **Stop** action now
+  terminates VMs directly and rapidly via `tart stop -t 5` with immediate process
+  kill fallback, releasing host RAM and slots in seconds.
+- **Simplified Web UI Actions**: Cleaned up the VM action buttons on the Dashboard
+  table to focus on core operations: **Run**, **Stop**, **Suspend**, **Screen**,
+  **Get info**, and **Edit**.
+- **Interactive Changelog Popup Modal**: Viewing the changelog in the web dashboard
+  now opens a responsive, scrollable popup modal that renders `CHANGELOG.md` dynamically
+  in-place without page reloads or 404 errors.
+
+## 1.33 — 2026-08-24
+
+### Robustness & Process Safety
+
+- **SSH Execution Deadlines**: `sshExec` now enforces an explicit context deadline
+  derived from the configured `SSHTimeoutSec` (with a 15-second buffer, defaulting to
+  120s). This prevents the scheduler and monitor loops from hanging indefinitely when
+  guest VMs stall, crash, or drop network connectivity during boot probes or commands.
+- **SSH Argument Delimiter**: `sshExecContext` now injects the standard POSIX `--`
+  argument delimiter before positional `user@ip` operands to guard against option injection.
+- **Process Handle Reaper Race Guard**: The asynchronous `cmd.Wait()` reaper closure
+  pins the specific `*exec.Cmd` instance, ensuring rapid VM restarts do not inadvertently
+  delete newly spawned process handles from the manager's live command map.
+- **Log Rotation Error Handling**: `rotatingWriter` now safely checks file descriptors
+  and captures errors when opening rotated `.1` log files.
+- **MDM SFTP Path Containment**: Added path sanitization and `../` traversal checks
+  in the remote SFTP file management operations.
+- **Panic-Free MDM Profile Escaping**: Replaced panicking XML escaping with proper
+  error propagation in MDM profile XML synthesis.
+
+### Performance & Resource Optimization
+
+- **Non-STW Memory Safeguard Metrics**: Replaced `runtime.ReadMemStats` with lock-free
+  atomic `runtime/metrics.Read` for `/memory/classes/heap/idle:bytes` and
+  `/memory/classes/heap/released:bytes`, eliminating global Stop-The-World (STW) pauses
+  during periodic memory safeguard evaluations.
+- **Struct Alignment Optimization**: Reordered struct fields in `PerformanceSample`
+  by descending byte size to eliminate CPU alignment padding across the 1,440-entry
+  telemetry history buffer while preserving exact JSON schema compatibility.
 
 ## 1.32 — 2026-08-23
 
