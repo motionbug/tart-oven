@@ -1,6 +1,8 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.35 hardens the
+This file records user-visible changes to Tart Oven. Version 1.36 moves the theme
+control into the header, simplifies host metrics onto a single source of truth, and
+adds opt-in automatic SSH key provisioning for guest VMs. Version 1.35 hardens the
 local API against cross-site requests, fixes several VM-lifecycle and Jamf/MDM
 correctness bugs, and makes the dashboard more resilient. Version 1.34 streamlines
 VM teardown by eliminating slow SSH graceful shutdown in favor of fast, direct
@@ -8,6 +10,47 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.36 — 2026-08-24
+
+### Automatic SSH Key Provisioning (Opt-In)
+
+- **Hands-Off Guest Access**: New **Install the SSH key on new VMs automatically**
+  setting under **Configuration → SSH**. When enabled, Tart Oven installs its public
+  key into each running VM's `~/.ssh/authorized_keys` about a minute after boot, so
+  **Send command** and **Get info** work without running `ssh-copy-id` per VM.
+- **Key Generation**: If the configured SSH identity file does not exist, Tart Oven
+  generates an ed25519 keypair in place (private key `0600`, public key `0644`). An
+  existing key is never overwritten.
+- **Never Repeats Itself**: Provisioning is gated on whether key authentication
+  already works, so a VM that already accepts the key — including clones that
+  inherited it from a TEMPLATE — is never touched. A guest that loses the key gets it
+  back on its next boot, with no per-VM bookkeeping to go stale.
+- **Boot-Aware Retries**: Waits 30 seconds for the guest to finish booting, then
+  retries with backoff up to 10 minutes. A guest that rejects the stored credentials
+  stops immediately and reports the failure instead of retrying.
+- **Safe by Default**: Ships disabled. Honors the scheduler exclude list, skips
+  TEMPLATE VMs and OCI images, appends to `authorized_keys` without disturbing keys
+  the guest already trusts, and never transmits the private key.
+
+### Header & Theme
+
+- **Theme Toggle in the Header**: Light/dark mode moved out of Configuration into a
+  single button in the top header, where it belongs — it was always a per-browser
+  display preference, never a server setting.
+- **Memory Pressure at a Glance**: The header now reports CPU, RAM, and macOS memory
+  pressure. VM disk capacity remains on the Performance tab, where its chart gives it
+  context.
+- **Single Source of Truth for Host Metrics**: Removed the duplicated `HostStats`
+  structure. The dashboard state now carries the latest performance sample directly,
+  so header and charts can no longer disagree. Each metric falls back independently
+  when its source is unavailable.
+- **Fewer Redundant Fetches**: The Performance tab re-downloads its 24-hour history
+  only when a new sample actually exists, instead of on every live update.
+
+> **API note:** `/api/vms` and the live event stream replace the `hostStats` object
+> with `performance`, which carries the full sample. The dashboard is the only
+> consumer of this field.
 
 ## 1.35 — 2026-08-24
 
