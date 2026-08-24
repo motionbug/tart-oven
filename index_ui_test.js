@@ -187,6 +187,31 @@ test("header renders each metric independently when a source is unavailable", ()
   assert.equal(elements.get("statPressure").style.color, "var(--red)");
 });
 
+test("mdmCell distinguishes enrolled, unenrolled and never-probed VMs", () => {
+  const mdmCell = evaluateFunctions(["consoleURL", "mdmCell"], "mdmCell", {
+    esc: (v) => String(v),
+  });
+
+  const enrolled = mdmCell({
+    mdmCheckedAt: "2026-08-24T12:00:00Z", mdmEnrolled: true,
+    mdmServer: "https://emeia.jamfce.com/mdm/ServerURL",
+  });
+  assert.match(enrolled, /ssh-dot green/);
+  assert.match(enrolled, /https:\/\/emeia\.jamfce\.com</,
+    "should show the console URL, not the check-in endpoint");
+  assert.ok(!/mdm\/ServerURL</.test(enrolled), "raw endpoint must not be the visible text");
+
+  const not = mdmCell({ mdmCheckedAt: "2026-08-24T12:00:00Z", mdmEnrolled: false });
+  assert.match(not, /ssh-dot red/);
+
+  // Never probed must be grey, not red: a fresh VM has not been asked yet.
+  for (const vm of [{}, { mdmCheckedAt: "0001-01-01T00:00:00Z" }]) {
+    const unknown = mdmCell(vm);
+    assert.match(unknown, /ssh-dot grey/);
+    assert.ok(!/ssh-dot red/.test(unknown), "unknown must not render as not-enrolled");
+  }
+});
+
 test("renderOCIImages hides cached images for running-only and renders clone-only rows", () => {
   const panel = { classList: { toggle(name, enabled) { panel.hidden = name === "hidden" && enabled; } } };
   const buttons = [];

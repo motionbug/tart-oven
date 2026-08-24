@@ -33,6 +33,8 @@
   .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
   .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--grey); }
   .stat-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+  .mdm-label { font-size: 11px; color: var(--muted); margin-left: 4px; vertical-align: middle; }
+  .mdm-url { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
   .via-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--grey); margin-left: 6px; vertical-align: middle; }
   .theme-toggle { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; padding: 6px 9px; }
   .theme-toggle:hover { border-color: var(--cyan); }
@@ -309,7 +311,7 @@
         </div>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>Notes</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>State</th><th>IP</th><th>SSH</th><th>Info</th><th>MDM</th><th>Last run</th><th>Time remaining</th><th>Actions</th></tr></thead>
         <tbody id="localVmRows"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
       </table>
     </div>
@@ -1369,6 +1371,29 @@ function infoCell(vm) {
   return '<div class="infobox" title="fetched ' + esc(fmtDateTime(vm.infoAt)) + '">' + esc(vm.info) + '</div>';
 }
 
+// Trims the MDM check-in endpoint down to the console URL an operator would open.
+function consoleURL(raw) {
+  const trimmed = String(raw || "").trim().replace(/\/+$/, "");
+  return trimmed.endsWith("/mdm/ServerURL") ? trimmed.slice(0, -"/mdm/ServerURL".length) : trimmed;
+}
+
+// Enrollment state for a guest. Never probed renders grey rather than red, so a VM
+// that has not been asked yet is never reported as unenrolled.
+function mdmCell(vm) {
+  const checked = vm.mdmCheckedAt && !vm.mdmCheckedAt.startsWith("0001");
+  if (!checked) {
+    return '<span class="ssh-dot grey" title="MDM enrollment not checked yet"></span>';
+  }
+  if (!vm.mdmEnrolled) {
+    return '<span class="ssh-dot red" title="no MDM enrollment reported"></span>' +
+      '<span class="mdm-label">Not enrolled</span>';
+  }
+  const url = consoleURL(vm.mdmServer);
+  const server = url ? '<div class="mdm-url" title="' + esc(vm.mdmServer || "") + '">' + esc(url) + '</div>' : "";
+  return '<span class="ssh-dot green" title="enrolled in MDM"></span>' +
+    '<span class="mdm-label">Enrolled</span>' + server;
+}
+
 // Tags displayed as chips (user-defined tags in accent color).
 function tagsHtml(vm) {
   if (!vm.tags || !vm.tags.length) return '';
@@ -1628,7 +1653,6 @@ function renderTable(vms) {
     const notRunning = vm.state !== "running" ? " disabled" : "";
     const stopDisabled = busy;
     const noScreen = (vm.state === "running" && vm.ip) ? "" : " disabled";
-    const notesPreview = vm.notes ? esc(vm.notes.length > 30 ? vm.notes.slice(0, 30) + '…' : vm.notes) : '<span class="muted">—</span>';
     const effUser = vm.sshUser || (latest.config && latest.config.sshUser) || "admin";
     return '<tr>' +
       '<td class="name"><b>' + n + '</b>' + tags + '</td>' +
@@ -1636,7 +1660,7 @@ function renderTable(vms) {
       '<td>' + ip + '</td>' +
       '<td>' + sshCell(vm) + '</td>' +
       '<td class="info">' + infoCell(vm) + '</td>' +
-      '<td class="notes" title="' + esc(vm.notes || '') + '">' + notesPreview + '</td>' +
+      '<td class="mdm">' + mdmCell(vm) + '</td>' +
       '<td class="muted" title="' + esc(fmtDateTime(vm.lastRun)) + '">' + fmtAgo(vm.lastRun) + '</td>' +
       '<td class="mono" data-stop="' + (vm.stopAt || "") + '" data-state="' + vm.state + '">' + rem + '</td>' +
       '<td class="acts"><div class="row-actions">' +
