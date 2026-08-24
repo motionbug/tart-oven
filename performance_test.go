@@ -9,15 +9,16 @@ import (
 	"time"
 )
 
-func TestManagerUpdatePerformanceAppendsAndUpdatesHeader(t *testing.T) {
+func TestManagerUpdatePerformanceAppendsSample(t *testing.T) {
 	source := &fakePerformanceSource{cpu: 55.6, memoryUsed: 2 << 30, memoryTotal: 8 << 30, vmUsed: 20 << 30, vmTotal: 80 << 30}
 	m := &Manager{cfg: Config{VMStoragePath: "/vm"}, performanceCollector: &performanceCollector{source: source}}
 	m.updatePerformance(time.Unix(100, 0))
 	if len(m.performanceHistory) != 1 {
 		t.Fatalf("history = %d", len(m.performanceHistory))
 	}
-	if m.hostStats.CPUPercent != 56 || m.hostStats.MemUsedMB != 2048 || m.hostStats.DiskTotalGB != 80 {
-		t.Fatalf("header = %+v", m.hostStats)
+	sample := m.performanceHistory[0]
+	if sample.CPUPercent != 55.6 || sample.MemoryUsedBytes != 2<<30 || sample.VMDiskTotalBytes != 80<<30 {
+		t.Fatalf("sample = %+v", sample)
 	}
 }
 
@@ -277,4 +278,26 @@ func (s *fakePerformanceSource) DiskCounters() (uint64, uint64, error) {
 
 func (s *fakePerformanceSource) Uptime() (uint64, error) {
 	return s.uptime, s.uptimeErr
+}
+
+func TestSnapshotExposesLatestPerformanceSample(t *testing.T) {
+	m := &Manager{
+		vms:  map[string]*VM{},
+		busy: map[string]bool{},
+		performanceHistory: []PerformanceSample{
+			{Timestamp: time.Unix(100, 0), CPUPercent: 12},
+			{Timestamp: time.Unix(160, 0), CPUPercent: 34, MemoryPressure: "normal", CPUAvailable: true},
+		},
+	}
+	snap := m.snapshot()
+	if snap.Performance.CPUPercent != 34 || snap.Performance.MemoryPressure != "normal" {
+		t.Fatalf("performance = %+v", snap.Performance)
+	}
+}
+
+func TestSnapshotHandlesEmptyPerformanceHistory(t *testing.T) {
+	m := &Manager{vms: map[string]*VM{}, busy: map[string]bool{}}
+	if got := m.snapshot().Performance.Timestamp; !got.IsZero() {
+		t.Fatalf("timestamp = %v, want zero", got)
+	}
 }

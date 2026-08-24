@@ -253,8 +253,8 @@ type Config struct {
 	SSHPassword             string        `json:"sshPassword"`     // guest SSH/sudo password; write-only
 	SSHKey                  string        `json:"sshKey"`          // optional identity file path
 	SSHTimeoutSec           int           `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand           string        `json:"statusCommand"` // command for "Get info"
-	RunArgs                 string        `json:"runArgs"`       // extra args appended to every `tart run`
+	StatusCommand           string        `json:"statusCommand"`   // command for "Get info"
+	RunArgs                 string        `json:"runArgs"`         // extra args appended to every `tart run`
 	NetPriority             string        `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
 	BootTimeoutSec          int           `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
 	HistoryDays             int           `json:"historyDays"`     // run-history retention in days
@@ -455,17 +455,6 @@ type Task struct {
 	cancel    context.CancelFunc // cancels ctx; nil once the task has finished
 }
 
-// HostStats is a lightweight compatibility snapshot of Mac mini health,
-// refreshed from the latest native performance sample about once a minute.
-type HostStats struct {
-	CPUPercent  int       `json:"cpuPercent"` // current CPU usage, rounded to the nearest integer
-	MemUsedMB   int64     `json:"memUsedMB"`
-	MemTotalMB  int64     `json:"memTotalMB"`
-	DiskUsedGB  int64     `json:"diskUsedGB"`
-	DiskTotalGB int64     `json:"diskTotalGB"`
-	UpdatedAt   time.Time `json:"updatedAt,omitempty"`
-}
-
 // Manager holds everything, guarded by mu.
 type Manager struct {
 	mu                   sync.Mutex
@@ -474,7 +463,6 @@ type Manager struct {
 	history              []*RunEvent // run log, pruned to cfg.HistoryDays
 	tasks                []*Task     // recent create/clone operations
 	logs                 []string    // rolling tart command log (last ~200 lines)
-	hostStats            HostStats   // refreshed ~once a minute
 	performanceCollector *performanceCollector
 	performanceHistory   []PerformanceSample
 	hostIP               string               // local IP of the host Mac
@@ -505,20 +493,20 @@ type persisted struct {
 
 // stateSnapshot is what we send to the dashboard (GET /api/vms and SSE).
 type stateSnapshot struct {
-	VMs            []*VM      `json:"vms"`
-	Config         configView `json:"config"`
-	StorageMounted bool       `json:"storageMounted"`
-	StoragePath    string     `json:"storagePath"`
-	WithinHours    bool       `json:"withinHours"` // currently inside the daily window
-	Now            time.Time  `json:"now"`
-	Version        string     `json:"version"`
-	TartJSON       bool       `json:"tartJSON"`
-	TartInstalled  bool       `json:"tartInstalled"`
-	TartVersion    string     `json:"tartVersion"`
-	Tasks          []*Task    `json:"tasks"`
-	HostStats      HostStats  `json:"hostStats"`
-	HostIP         string     `json:"hostIP"`
-	Logs           []string   `json:"logs"`
+	VMs            []*VM             `json:"vms"`
+	Config         configView        `json:"config"`
+	StorageMounted bool              `json:"storageMounted"`
+	StoragePath    string            `json:"storagePath"`
+	WithinHours    bool              `json:"withinHours"` // currently inside the daily window
+	Now            time.Time         `json:"now"`
+	Version        string            `json:"version"`
+	TartJSON       bool              `json:"tartJSON"`
+	TartInstalled  bool              `json:"tartInstalled"`
+	TartVersion    string            `json:"tartVersion"`
+	Tasks          []*Task           `json:"tasks"`
+	Performance    PerformanceSample `json:"performance"`
+	HostIP         string            `json:"hostIP"`
+	Logs           []string          `json:"logs"`
 }
 
 // tartVM matches the JSON emitted by `tart list --format json`.
@@ -2309,6 +2297,11 @@ func (m *Manager) snapshot() stateSnapshot {
 	}
 	logs := append([]string(nil), m.logs...)
 
+	var latestSample PerformanceSample
+	if n := len(m.performanceHistory); n > 0 {
+		latestSample = m.performanceHistory[n-1]
+	}
+
 	return stateSnapshot{
 		VMs:            vms,
 		Config:         newConfigView(m.cfg),
@@ -2321,7 +2314,7 @@ func (m *Manager) snapshot() stateSnapshot {
 		TartInstalled:  tartInstalledAt(m.cfg.TartAppPath),
 		TartVersion:    m.tartVersion,
 		Tasks:          tasks,
-		HostStats:      m.hostStats,
+		Performance:    latestSample,
 		HostIP:         m.hostIP,
 		Logs:           logs,
 	}

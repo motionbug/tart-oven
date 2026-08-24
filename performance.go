@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -73,14 +72,6 @@ func (m *Manager) updatePerformance(now time.Time) {
 
 	m.mu.Lock()
 	m.performanceHistory = appendPerformanceSample(m.performanceHistory, sample)
-	m.hostStats = HostStats{
-		CPUPercent:  int(math.Round(sample.CPUPercent)),
-		MemUsedMB:   int64(sample.MemoryUsedBytes / (1 << 20)),
-		MemTotalMB:  int64(sample.MemoryTotalBytes / (1 << 20)),
-		DiskUsedGB:  int64(sample.VMDiskUsedBytes / (1 << 30)),
-		DiskTotalGB: int64(sample.VMDiskTotalBytes / (1 << 30)),
-		UpdatedAt:   sample.Timestamp,
-	}
 	m.mu.Unlock()
 }
 
