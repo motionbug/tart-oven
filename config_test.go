@@ -136,3 +136,52 @@ func TestHandleConfigAppliesExplicitOCIExclusionValues(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleConfigJamfPartialSavePreservesAllSchedulerSettings(t *testing.T) {
+	m := newTestManager(t)
+	m.cfg.WindowMinutes = 90
+	m.cfg.IntervalMinutes = 15
+	m.cfg.DailyEnabled = true
+	m.cfg.DailyStart = "09:00"
+	m.cfg.DailyStop = "18:00"
+	m.cfg.Paused = true
+	m.cfg.ExcludeOCIFromScheduler = true
+	m.cfg.SSHUser = "admin"
+	m.cfg.SSHPassword = "initial-pass"
+
+	body := `{"jamfBaseUrl":"https://company.jamfcloud.com","jamfInvitationCode":"inv-999","sshUser":"admin","sshPassword":"new-pass"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body))
+	res := httptest.NewRecorder()
+
+	m.handleConfig(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if m.cfg.JamfBaseURL != "https://company.jamfcloud.com" {
+		t.Errorf("JamfBaseURL = %q, want %q", m.cfg.JamfBaseURL, "https://company.jamfcloud.com")
+	}
+	if m.cfg.JamfInvitationCode != "inv-999" {
+		t.Errorf("JamfInvitationCode = %q, want %q", m.cfg.JamfInvitationCode, "inv-999")
+	}
+	if m.cfg.SSHPassword != "new-pass" {
+		t.Errorf("SSHPassword = %q, want %q", m.cfg.SSHPassword, "new-pass")
+	}
+	// Verify scheduler settings were NOT wiped or reset
+	if m.cfg.WindowMinutes != 90 {
+		t.Errorf("WindowMinutes = %d, want 90", m.cfg.WindowMinutes)
+	}
+	if m.cfg.IntervalMinutes != 15 {
+		t.Errorf("IntervalMinutes = %d, want 15", m.cfg.IntervalMinutes)
+	}
+	if !m.cfg.Paused {
+		t.Error("Paused changed to false, expected true")
+	}
+	if !m.cfg.DailyEnabled {
+		t.Error("DailyEnabled changed to false, expected true")
+	}
+	if m.cfg.DailyStart != "09:00" || m.cfg.DailyStop != "18:00" {
+		t.Errorf("Daily window = %s-%s, want 09:00-18:00", m.cfg.DailyStart, m.cfg.DailyStop)
+	}
+}
+

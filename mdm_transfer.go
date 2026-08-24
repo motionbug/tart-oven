@@ -189,6 +189,9 @@ func (d *sshSFTPProfileDialer) Dial(ctx context.Context, target mdmTransferTarge
 	}
 
 	return &sftpRemoteProfileFS{
+		mkdirAll: func(path string) error {
+			return sftpClient.MkdirAll(path)
+		},
 		openFile: func(path string, flags int) (io.WriteCloser, error) {
 			return sftpClient.OpenFile(path, flags)
 		},
@@ -220,6 +223,7 @@ func transferDeadline(ctx context.Context, timeout time.Duration) time.Time {
 }
 
 type sftpRemoteProfileFS struct {
+	mkdirAll       func(string) error
 	openFile       func(string, int) (io.WriteCloser, error)
 	readFile       func(string) ([]byte, error)
 	chmod          func(string, fs.FileMode) error
@@ -230,6 +234,10 @@ func (f *sftpRemoteProfileFS) WriteFile(path string, data []byte, perm fs.FileMo
 	cleaned := filepath.Clean(path)
 	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
 		return fmt.Errorf("invalid path traversal: %s", path)
+	}
+	dir := filepath.Dir(cleaned)
+	if dir != "" && dir != "." && f.mkdirAll != nil {
+		_ = f.mkdirAll(dir)
 	}
 	file, err := f.openFile(cleaned, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
 	if err != nil {

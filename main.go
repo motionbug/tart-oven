@@ -2316,9 +2316,13 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	m.mu.Unlock()
 
 	username, password := effectiveSSHCredentials(cfg, &vmCopy)
+	sshTimeout := cfg.SSHTimeoutSec
+	if sshTimeout < 1 {
+		sshTimeout = 30
+	}
 	baseURL, baseURLErr := normalizeJamfBaseURL(cfg.JamfBaseURL)
 	if baseURLErr != nil || baseURL == "" || strings.TrimSpace(cfg.JamfInvitationCode) == "" ||
-		strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" || cfg.SSHTimeoutSec < 1 {
+		strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
 		status, message := safeMDMStageError(mdmStageConfiguration)
 		writeMDMProfileError(w, status, name, mdmStageConfiguration, message)
 		return
@@ -2366,7 +2370,7 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 		Address:  net.JoinHostPort(ip, "22"),
 		Username: username,
 		Password: password,
-		Timeout:  time.Duration(cfg.SSHTimeoutSec) * time.Second,
+		Timeout:  time.Duration(sshTimeout) * time.Second,
 	}
 	if err := m.mdmCopier.CopyAndVerify(r.Context(), target, profile, payloadUUID); err != nil {
 		stage := mdmStageSFTP
@@ -2816,105 +2820,234 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var in Config
-	if err := json.Unmarshal(body, &in); err != nil {
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var presence struct {
-		ExcludeOCIFromScheduler *bool `json:"excludeOciFromScheduler"`
-	}
-	if err := json.Unmarshal(body, &presence); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if in.JamfBaseURL != "" {
-		baseURL, err := normalizeJamfBaseURL(in.JamfBaseURL)
-		if err != nil {
+
+	// Validate JamfBaseURL if present
+	if raw, ok := fields["jamfBaseUrl"]; ok {
+		var urlStr string
+		if err := json.Unmarshal(raw, &urlStr); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		in.JamfBaseURL = baseURL
+		if urlStr != "" {
+			if _, err := normalizeJamfBaseURL(urlStr); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 	}
 
 	m.mu.Lock()
-	// Apply with sane floors; keep Listen change for next restart (we don't
-	// rebind a live listener).
-	prevListen := m.cfg.Listen
 	prevPaused := m.cfg.Paused
-	prevPassword := m.cfg.SSHPassword
-	prevInvitationCode := m.cfg.JamfInvitationCode
-	prevExcludeOCI := m.cfg.ExcludeOCIFromScheduler
-	m.cfg = in
-	if m.cfg.Listen == "" {
-		m.cfg.Listen = prevListen
+	prevStorage := m.cfg.VMStoragePath
+
+	if raw, ok := fields["listen"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			m.cfg.Listen = v
+		}
 	}
-	// The password field is write-only: the client never receives the stored
-	// value back, so a blank submission means "leave it unchanged" rather
-	// than "clear it".
-	if m.cfg.SSHPassword == "" {
-		m.cfg.SSHPassword = prevPassword
+	if raw, ok := fields["vmStoragePath"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			m.cfg.VMStoragePath = v
+		}
 	}
-	if m.cfg.JamfInvitationCode == "" {
-		m.cfg.JamfInvitationCode = prevInvitationCode
+	if raw, ok := fields["sharedDir"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			m.cfg.SharedDir = v
+		}
 	}
-	if presence.ExcludeOCIFromScheduler == nil {
-		m.cfg.ExcludeOCIFromScheduler = prevExcludeOCI
+	if raw, ok := fields["tartAppPath"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			m.cfg.TartAppPath = v
+		}
 	}
-	if m.cfg.IntervalMinutes < 1 {
-		m.cfg.IntervalMinutes = 1
+	if raw, ok := fields["intervalMinutes"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			m.cfg.IntervalMinutes = v
+		}
 	}
-	if m.cfg.WindowMinutes < 1 {
-		m.cfg.WindowMinutes = 1
+	if raw, ok := fields["windowMinutes"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			m.cfg.WindowMinutes = v
+		}
 	}
-	if m.cfg.MaxConcurrent < 1 {
-		m.cfg.MaxConcurrent = 1
+	if raw, ok := fields["maxConcurrent"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			if v > hardMaxConcurrent {
+				v = hardMaxConcurrent
+			}
+			m.cfg.MaxConcurrent = v
+		}
 	}
-	if m.cfg.MaxConcurrent > hardMaxConcurrent {
-		m.cfg.MaxConcurrent = hardMaxConcurrent
+	if raw, ok := fields["schedulerMode"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			if v == "sequential" {
+				m.cfg.SchedulerMode = "sequential"
+			} else if v == "random" {
+				m.cfg.SchedulerMode = "random"
+			}
+		}
 	}
-	if m.cfg.SchedulerMode != "sequential" {
-		m.cfg.SchedulerMode = "random"
+	if raw, ok := fields["excluded"]; ok {
+		var v []string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.Excluded = v
+		}
 	}
-	if m.cfg.SSHTimeoutSec < 1 {
-		m.cfg.SSHTimeoutSec = 1
+	if raw, ok := fields["excludeOciFromScheduler"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.ExcludeOCIFromScheduler = v
+		}
 	}
-	if m.cfg.SSHUser == "" {
-		m.cfg.SSHUser = "admin"
+	if raw, ok := fields["jamfRecon"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.JamfRecon = v
+		}
 	}
-	if m.cfg.SSHPassword == "" {
-		m.cfg.SSHPassword = "admin"
+	if raw, ok := fields["paused"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.Paused = v
+		}
 	}
-	if m.cfg.ShutdownWaitSec < 1 {
-		m.cfg.ShutdownWaitSec = 60
+	if raw, ok := fields["dailyEnabled"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.DailyEnabled = v
+		}
 	}
-	if m.cfg.VMStoragePath == "" {
-		m.cfg.VMStoragePath = fallbackStoragePath
+	if raw, ok := fields["dailyStart"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			if _, ok := parseHHMM(v); ok {
+				m.cfg.DailyStart = v
+			}
+		}
 	}
-	if m.cfg.SharedDir == "" {
-		m.cfg.SharedDir = defaultSharedDir
+	if raw, ok := fields["dailyStop"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			if _, ok := parseHHMM(v); ok {
+				m.cfg.DailyStop = v
+			}
+		}
 	}
-	if m.cfg.TartAppPath == "" {
-		m.cfg.TartAppPath = defaultTartBin
+	if raw, ok := fields["jamfBaseUrl"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			if v == "" {
+				m.cfg.JamfBaseURL = ""
+			} else if norm, err := normalizeJamfBaseURL(v); err == nil {
+				m.cfg.JamfBaseURL = norm
+			}
+		}
 	}
-	if m.cfg.Excluded == nil {
-		m.cfg.Excluded = []string{}
+	if raw, ok := fields["jamfInvitationCode"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && strings.TrimSpace(v) != "" {
+			m.cfg.JamfInvitationCode = strings.TrimSpace(v)
+		}
 	}
-	if m.cfg.HistoryDays < 1 {
-		m.cfg.HistoryDays = 60
+	if raw, ok := fields["sshUser"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && strings.TrimSpace(v) != "" {
+			m.cfg.SSHUser = strings.TrimSpace(v)
+		}
 	}
-	if m.cfg.BootTimeoutSec < 10 {
-		m.cfg.BootTimeoutSec = 60
+	if raw, ok := fields["sshPassword"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && v != "" {
+			m.cfg.SSHPassword = v
+		}
 	}
-	if m.cfg.NetPriority != "wifi" && m.cfg.NetPriority != "ethernet" {
-		m.cfg.NetPriority = "auto"
+	if raw, ok := fields["sshKey"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.SSHKey = v
+		}
 	}
-	if _, ok := parseHHMM(m.cfg.DailyStart); !ok {
-		m.cfg.DailyStart = "08:00"
+	if raw, ok := fields["sshTimeoutSec"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			m.cfg.SSHTimeoutSec = v
+		}
 	}
-	if _, ok := parseHHMM(m.cfg.DailyStop); !ok {
-		m.cfg.DailyStop = "22:00"
+	if raw, ok := fields["statusCommand"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.StatusCommand = v
+		}
 	}
+	if raw, ok := fields["shutdownCommand"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.ShutdownCommand = v
+		}
+	}
+	if raw, ok := fields["shutdownWaitSec"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			m.cfg.ShutdownWaitSec = v
+		}
+	}
+	if raw, ok := fields["runArgs"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.RunArgs = v
+		}
+	}
+	if raw, ok := fields["netPriority"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && (v == "wifi" || v == "ethernet" || v == "auto") {
+			m.cfg.NetPriority = v
+		}
+	}
+	if raw, ok := fields["bootTimeoutSec"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 10 {
+			m.cfg.BootTimeoutSec = v
+		}
+	}
+	if raw, ok := fields["historyDays"]; ok {
+		var v int
+		if json.Unmarshal(raw, &v) == nil && v >= 1 {
+			m.cfg.HistoryDays = v
+		}
+	}
+	if raw, ok := fields["logPath"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.LogPath = v
+		}
+	}
+	if raw, ok := fields["serverLabel"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.ServerLabel = v
+		}
+	}
+	if raw, ok := fields["showRunningOnly"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.ShowRunningOnly = v
+		}
+	}
+
 	m.pruneHistory() // retention may have shrunk
 	nowOn := prevPaused && !m.cfg.Paused
 	nowOff := !prevPaused && m.cfg.Paused
@@ -2941,7 +3074,9 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Storage path may have changed; re-check and wake the scheduler so the new
 	// interval takes effect immediately.
-	m.checkStorage()
+	if m.cfg.VMStoragePath != prevStorage {
+		m.checkStorage()
+	}
 	select {
 	case m.reload <- struct{}{}:
 	default:

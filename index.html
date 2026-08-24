@@ -1028,8 +1028,32 @@ async function saveConfig(extra, statusId) {
     if (s) { s.textContent = res.ok ? "saved ✓" : (errorText || "save failed"); setTimeout(() => s.textContent = "", 2500); }
   } catch (e) { if (s) s.textContent = "error: " + e.message; }
 }
+async function saveJamfConfig() {
+  const s = document.getElementById("jamfSaveStatus");
+  const jamfBaseUrl = document.getElementById("jamfBaseUrl").value.trim();
+  const jamfInvitationCode = document.getElementById("jamfInvitationCode").value.trim();
+  const sshUser = document.getElementById("sshUser").value.trim();
+  const sshPassword = document.getElementById("sshPassword").value;
+  try {
+    if (s) s.textContent = "saving…";
+    const payload = { jamfBaseUrl, sshUser: sshUser || "admin" };
+    if (jamfInvitationCode) payload.jamfInvitationCode = jamfInvitationCode;
+    if (sshPassword) payload.sshPassword = sshPassword;
+    const res = await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      document.getElementById("sshPassword").value = "";
+      document.getElementById("jamfInvitationCode").value = "";
+      setSavedSecretPlaceholder("sshPassword", true);
+      setSavedSecretPlaceholder("jamfInvitationCode", true);
+    }
+    const errorText = res.ok ? "" : await res.text();
+    if (s) { s.textContent = res.ok ? "saved ✓" : (errorText || "save failed"); setTimeout(() => s.textContent = "", 2500); }
+  } catch (e) { if (s) s.textContent = "error: " + e.message; }
+}
 document.getElementById("saveBtn").onclick = () => saveConfig();
-document.getElementById("saveJamfBtn").onclick = () => saveConfig({}, "jamfSaveStatus");
+document.getElementById("saveJamfBtn").onclick = saveJamfConfig;
 document.getElementById("pauseBtn").onclick = () => saveConfig({ paused: !(latest && latest.config.paused) });
 document.getElementById("refreshBtn").onclick = async (e) => {
   const btn = e.currentTarget;
