@@ -2941,7 +2941,12 @@ func (m *Manager) routes() *http.ServeMux {
 		}
 		vm.Notes = b.Notes
 		vm.Tags = tags
-		vm.SSHUser = strings.TrimSpace(b.SSHUser)
+		// Omitted by the dashboard's notes-only editor, so a blank submission means
+		// "leave it unchanged" — matching the password below. Assigning it
+		// unconditionally silently wiped a VM's custom user when saving a note.
+		if user := strings.TrimSpace(b.SSHUser); user != "" {
+			vm.SSHUser = user
+		}
 		// Write-only: the client never receives the stored password back, so a
 		// blank submission means "leave it unchanged", not "clear it".
 		if pw := strings.TrimSpace(b.SSHPassword); pw != "" {

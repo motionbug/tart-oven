@@ -251,3 +251,15 @@ func TestConfigMergeRejectsARelativeSSHKey(t *testing.T) {
 		t.Fatalf("sshKey = %q, want the default preserved", m.cfg.SSHKey)
 	}
 }
+
+func TestNotesUpdateKeepsPerVMSSHUserWhenOmitted(t *testing.T) {
+	m := &Manager{cfg: defaultConfig(), busy: map[string]bool{},
+		vms:       map[string]*VM{"vm1": {Name: "vm1", SSHUser: "tester"}},
+		statePath: filepath.Join(t.TempDir(), "state.json")}
+	req := httptest.NewRequest(http.MethodPost, "/api/vm/notes",
+		strings.NewReader(`{"name":"vm1","notes":"a note","tags":[]}`))
+	m.routes().ServeHTTP(httptest.NewRecorder(), req)
+	if got := m.vms["vm1"].SSHUser; got != "tester" {
+		t.Fatalf("sshUser = %q, want it preserved", got)
+	}
+}
