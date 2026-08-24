@@ -545,7 +545,6 @@
 
       <h3>Tip · Do it once for the whole fleet</h3>
       <p class="muted">Add the public key to your <b>TEMPLATE</b> VM's <span class="mono">~/.ssh/authorized_keys</span> before cloning — every clone inherits it, so you never repeat steps 1–2.</p>
-      <p class="muted">Or turn on <b>Install the SSH key on new VMs automatically</b> in Configuration → SSH: Tart Oven generates the key if it is missing and installs it on each running VM about a minute after boot, skipping any VM that already accepts it.</p>
     </div>
 
   </div>
@@ -592,7 +591,6 @@
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
-        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="autoInstallSSHKey"><span class="slider"></span></span> Install the SSH key on new VMs automatically</label></div>
       </div>
     </div>
 
@@ -1055,7 +1053,6 @@ function fillConfig(c) {
   set("serverLabel", c.serverLabel || "");
   set("logPath", c.logPath || "");
   chk("showRunningOnly", c.showRunningOnly);
-  chk("autoInstallSSHKey", c.autoInstallSSHKey);
   renderJamfProfiles();
   configLoaded = true;
 }
@@ -1080,7 +1077,6 @@ function readConfig() {
     excluded,
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
-    autoInstallSSHKey: chk("autoInstallSSHKey"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
   };
@@ -1404,7 +1400,7 @@ let prevErrors = {};
 let seenFirstSnapshot = false;
 function checkErrors(vms) {
   vms.forEach(vm => {
-    const e = vm.lastError || vm.sshKeyError || "";
+    const e = vm.lastError || "";
     if (seenFirstSnapshot && e && e !== prevErrors[vm.name]) {
       toast(vm.name, e, "bad", "panel-tart-logs");
     }
