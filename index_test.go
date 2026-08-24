@@ -263,8 +263,13 @@ func TestPerformanceHistoryLoadsOnlyWhileVisible(t *testing.T) {
 	if !strings.Contains(showTab, `if (id === "performance") loadPerformance();`) {
 		t.Error("showTab performance load is not scoped to opening Performance")
 	}
-	if !strings.Contains(render, `if (activeTab === "performance") loadPerformance();`) {
+	if !strings.Contains(render, `activeTab === "performance"`) {
 		t.Error("SSE render performance load is not visibility guarded")
+	}
+	// A new sample only appears once a minute while SSE pushes arrive far more often,
+	// so the render path must also gate on the sample timestamp advancing.
+	if !strings.Contains(render, `sampleAt !== lastPerformanceSampleAt`) {
+		t.Error("SSE render performance load is not gated on a new sample")
 	}
 }
 

@@ -601,7 +601,6 @@
         <div class="field"><label>Listen (host:port — restart to apply)</label><input type="text" id="listen"></div>
         <div class="field"><label>Log file path</label><input type="text" id="logPath" placeholder="~/Library/Logs/tart-oven.log"></div>
         <div class="field"><label>History retention (days)</label><input type="number" id="historyDays" min="1"></div>
-        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="lightMode"><span class="slider"></span></span> Light mode</label></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="launchAtBoot"><span class="slider"></span></span> Launch at login</label><small id="launchAtBootStatus" class="muted"></small></div>
       </div>
       <div class="actions">
@@ -693,6 +692,12 @@
 function setTheme(light) {
   document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
   try { localStorage.setItem("theme", light ? "light" : "dark"); } catch (e) {}
+  const toggle = document.getElementById("themeToggle");
+  if (toggle) {
+    toggle.textContent = light ? "☀️" : "🌙";
+    toggle.setAttribute("aria-pressed", light ? "true" : "false");
+    toggle.title = light ? "Switch to dark mode" : "Switch to light mode";
+  }
   if (latestPerformanceSnapshot) renderPerformance(latestPerformanceSnapshot);
 }
 function getTheme() {
@@ -707,6 +712,7 @@ let histTimer = null;
 let mdmCopyInFlight = false;
 let performanceLoadInFlight = false;
 let latestPerformanceSnapshot = null;
+let lastPerformanceSampleAt = ""; // newest sample already fetched into the charts
 let performanceResizeTimer = null;
 
 async function api(path, opts) {
@@ -1489,7 +1495,13 @@ function render(state) {
   checkErrors(state.vms);
 
   if (activeTab === "logs") scheduleHistory();
-  if (activeTab === "performance") loadPerformance();
+  // The server produces one sample a minute; SSE pushes arrive far more often. Only
+  // refetch the history when there is genuinely a new sample to draw.
+  const sampleAt = (state.performance && state.performance.timestamp) || "";
+  if (activeTab === "performance" && sampleAt !== lastPerformanceSampleAt) {
+    lastPerformanceSampleAt = sampleAt;
+    loadPerformance();
+  }
 }
 
 function isOCI(source) {
@@ -2086,8 +2098,9 @@ el("srvStop").onclick = async () => {
   } catch (e) { toast("Stop failed", e.message, "bad"); }
 };
 // Light mode toggle
-el("lightMode").checked = getTheme() === "light";
-el("lightMode").onchange = (e) => setTheme(e.target.checked);
+setTheme(getTheme() === "light"); // sync the header button with the stored preference
+el("themeToggle").onclick = () =>
+  setTheme(document.documentElement.getAttribute("data-theme") !== "light");
 
 // Launch at login toggle
 (async function initLaunchAgent() {

@@ -97,7 +97,7 @@ test("setTheme immediately redraws a cached performance snapshot", () => {
   let redraws = 0;
   let redrawnSnapshot = null;
   const setTheme = evaluateFunction("setTheme", {
-    document: { documentElement: { setAttribute() {} } },
+    document: { documentElement: { setAttribute() {} }, getElementById() { return null; } },
     localStorage: { setItem() {} },
     latestPerformanceSnapshot: snapshot,
     renderPerformance(value) { redraws++; redrawnSnapshot = value; },
@@ -105,6 +105,21 @@ test("setTheme immediately redraws a cached performance snapshot", () => {
   setTheme(true);
   assert.equal(redraws, 1);
   assert.equal(redrawnSnapshot, snapshot);
+});
+
+test("setTheme updates the header toggle face and pressed state", () => {
+  const toggle = { textContent: "", title: "", attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  const setTheme = evaluateFunction("setTheme", {
+    document: { documentElement: { setAttribute() {} }, getElementById: () => toggle },
+    localStorage: { setItem() {} },
+    latestPerformanceSnapshot: null,
+  });
+  setTheme(true);
+  assert.equal(toggle.textContent, "\u2600\ufe0f");
+  assert.equal(toggle.attrs["aria-pressed"], "true");
+  setTheme(false);
+  assert.equal(toggle.textContent, "\ud83c\udf19");
+  assert.equal(toggle.attrs["aria-pressed"], "false");
 });
 
 test("performanceColour keeps thresholds associated with their metric", () => {
