@@ -13,7 +13,7 @@ Current release: **1.36**. [View Changelog](CHANGELOG.md) for full release notes
 ## 1. What Tart Oven Does
 
 - **Automated VM Scheduler** — Run virtual machines for a configurable time window according to intervals and daily working hours. Outside working hours, Tart Oven automatically shuts down running VMs. Selection modes include *Random* and *Sequential* (round-robin). Cached OCI images are excluded from scheduling by default so only runnable local clones are scheduled.
-- **Full VM Lifecycle Controls** — Run, Stop (fast direct hard stop), Suspend, Restart, Send command (SSH), Get info (SSH status check), and Screen (direct macOS Screen Sharing).
+- **Full VM Lifecycle Controls** — Run, Stop (fast direct hard stop), Restart, Send command, Get info, and Screen (direct macOS Screen Sharing). Commands run through the Tart guest agent when the guest has one, falling back to SSH otherwise.
 - **Local VM & OCI Image Separation** — The Dashboard clearly separates runnable local VMs from cached OCI registry base images, carrying Tart's source and storage metadata through the UI and API.
 - **Native Host Performance Monitoring** — Inspect real-time host CPU usage, physical RAM, Darwin kernel memory pressure, disk capacity, and I/O throughput alongside 24 hours of in-memory charts.
 - **Kernel Memory Safeguards** — Automatically defer new VM starts while macOS reports critical memory pressure (`kern.memorystatus_vm_pressure_level`), preventing host instability. Periodically scavenges unused Go heap pages back to macOS.
@@ -26,7 +26,7 @@ Current release: **1.36**. [View Changelog](CHANGELOG.md) for full release notes
 
 Tart's storage contains two distinct kinds of items:
 
-- **Local VMs**: Independent, bootable virtual machines stored in `TART_HOME`. You can run, stop, suspend, inspect, edit, rename, and delete these machines.
+- **Local VMs**: Independent, bootable virtual machines stored in `TART_HOME`. You can run, stop, inspect, edit, rename, and delete these machines.
 - **OCI Images**: Cached container registry base images (e.g. `ghcr.io/cirruslabs/macos-tahoe-base:latest`). Tart Oven displays their repository reference, size, virtual disk size, and last-accessed timestamp. Their primary Dashboard action is **Clone**.
 
 ### Cloning an OCI Image to a Local VM
@@ -43,7 +43,7 @@ Tart's storage contains two distinct kinds of items:
 ## 3. The Core Tart Oven Workflow
 
 ```
-[ 1. Clone or Create VM ] ──► [ 2. Configure Hardware & SSH ] ──► [ 3. Start VM / Enable Scheduler ] ──► [ 4. Screen Share or Run Tasks ] ──► [ 5. Suspend or Stop ]
+[ 1. Clone or Create VM ] ──► [ 2. Configure Hardware ] ──► [ 3. Start VM / Enable Scheduler ] ──► [ 4. Screen Share or Run Tasks ] ──► [ 5. Stop ]
 ```
 
 ### 1. Provisioning a Virtual Machine
@@ -71,7 +71,7 @@ To enable automated status checks and remote commands:
 - **Dashboard** — Scheduler master switch, **Refresh VM status** button, separated Local VMs and OCI Images tables with search and filter controls, and per-VM action buttons.
 - **Performance** — Live host health cards (CPU, RAM, Kernel Pressure, Disks, Uptime) and interactive 24-hour historical telemetry charts.
 - **VM Management** — VM creation (IPSW install or OCI/template cloning), hardware editing (`tart set`), renaming, and deletion. Background task output is streamed live to the **Activity** panel.
-- **Configuration** — Centralized settings for the VM Scheduler, Tart runtime & storage paths, SSH timeouts, network listen address, light/dark theme, and auto-start LaunchAgent.
+- **Configuration** — Centralized settings for the VM Scheduler, Tart runtime & storage paths, SSH timeouts, network listen address, and auto-start LaunchAgent. The light/dark toggle lives in the page header.
 - **Logs** — Rolling system logs, background Activity task output, and searchable VM run history.
 - **Helper Guide** — Interactive, in-app documentation and user guide.
 
@@ -96,9 +96,16 @@ When the Darwin kernel reports **Critical** memory pressure (`kern.memorystatus_
 - Manual start attempts display a clear explanation: `host is under critical memory pressure`.
 - As soon as host pressure drops, the start gate clears automatically.
 
-### Suspend vs. Fast Hard Stop
-- **Suspend**: Saves machine state and releases host memory. Requires `--suspendable` in **Configuration → Custom run arguments** before starting the VM. Suspended VMs are protected from accidental deletion or modification until resumed.
-- **Stop (Fast Direct)**: Executes `tart stop -t 5` directly, terminating the VM within seconds and releasing host resources immediately with process kill fallback if needed.
+### Guest Command Execution
+Tart Oven runs **Get info** and **Send command** through the **Tart guest agent** over a
+virtual socket — no SSH, no key, no guest network, and no credentials. The official
+`ghcr.io/cirruslabs/macos-*-base` images ship the agent preinstalled. For guests without
+it (for example `vanilla-*` images), Tart Oven falls back to SSH using the identity file
+in **Configuration → SSH & Commands**; see the SSH setup guide in **VM Management**.
+
+### Stopping a VM
+**Stop** executes `tart stop -t 5` directly, terminating the VM within seconds and
+releasing host resources, with a process kill fallback if needed.
 
 ---
 
@@ -118,11 +125,11 @@ To access the web dashboard from another Mac or PC on your local network:
 
 ## 7. Installation, Upgrades & Deployment
 
-### Install or Upgrade to 1.34
-Double-click `TartOven-1.34.pkg` or run from Terminal:
+### Install or Upgrade to 1.37
+Double-click `TartOven-1.37.pkg` or run from Terminal:
 
 ```sh
-sudo installer -pkg ~/Downloads/TartOven-1.34.pkg -target /
+sudo installer -pkg ~/Downloads/TartOven-1.37.pkg -target /
 ```
 
 This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing configuration in `~/.tart-oven/state.json`.
@@ -134,7 +141,7 @@ This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, r
 go build -o tart-oven .
 
 # 2. Build & sign macOS installer package (.pkg)
-# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.34.pkg
+# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.37.pkg
 ./packaging/build-pkg.sh
 ```
 
@@ -147,7 +154,6 @@ go build -o tart-oven .
 | GET | `/api/vms` | — | Full daemon state snapshot, VM metadata, and status |
 | POST | `/api/run` | `{"name": "vm-name"}` | Start a VM |
 | POST | `/api/stop` | `{"name": "vm-name"}` | Fast hard stop a VM (`tart stop -t 5`) |
-| POST | `/api/suspend` | `{"name": "vm-name"}` | Suspend a running VM |
 | POST | `/api/restart` | `{"name": "vm-name"}` | Restart a VM |
 | POST | `/api/exec` | `{"name": "vm", "command": "cmd"}` | Execute remote SSH command |
 | GET | `/api/info` | `?name=vm-name` | Query guest SSH status and system info |
@@ -203,4 +209,3 @@ Tart Oven provides a one-click helper to generate an Apple MDM enrollment profil
 | **VM reports "No IP after 60s"** | The VM started but has not emitted DHCP traffic on the bridge interface. Verify that the configured bridge interface is active, or increase **Boot timeout** under Configuration. |
 | **SSH bubble is Red / Get Info fails** | SSH connection could not be established. Ensure Remote Login is enabled in guest macOS Sharing settings and verify credentials in Configuration. |
 | **"Deferred: host is under critical memory pressure"** | Host RAM is exhausted. Tart Oven paused new starts to prevent a kernel crash. Stop idle VMs or reduce guest RAM allocations in VM Management. |
-| **Suspend reports VM is not suspendable** | Add `--suspendable` to **Configuration → Custom run arguments**, then restart the VM from a clean stopped state. |

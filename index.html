@@ -181,8 +181,6 @@
   .s-stopped  { color: var(--grey); }   .s-stopped .dot  { background: var(--grey); }
   .s-starting { color: var(--amber); }  .s-starting .dot { background: var(--amber); animation: pulse 1s infinite; }
   .s-stopping { color: var(--amber); }  .s-stopping .dot { background: var(--amber); animation: pulse 1s infinite; }
-  .s-suspending { color: var(--amber); } .s-suspending .dot { background: var(--amber); animation: pulse 1s infinite; }
-  .s-suspended { color: var(--accent); } .s-suspended .dot { background: var(--accent); }
   @keyframes pulse { 50% { opacity: .35; } }
   .tag { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); border: 1px solid var(--border); margin-left: 6px; }
   .tag.warn { color: var(--amber); border-color: rgba(255,183,77,.55); background: rgba(255,183,77,.10); }
@@ -1581,7 +1579,7 @@ function renderTable(vms) {
     const rem = (vm.state === "running" && !latest.config.paused) ? fmtRemaining(vm.stopAt) : "—";
     const ip = vm.ip ? '<span class="ip">' + esc(vm.ip) + '</span>' : '<span class="muted">—</span>';
     const notRunning = vm.state !== "running" ? " disabled" : "";
-    const stopDisabled = vm.state === "suspended" ? " disabled" : busy;
+    const stopDisabled = busy;
     const noScreen = (vm.state === "running" && vm.ip) ? "" : " disabled";
     const notesPreview = vm.notes ? esc(vm.notes.length > 30 ? vm.notes.slice(0, 30) + '…' : vm.notes) : '<span class="muted">—</span>';
     const effUser = vm.sshUser || (latest.config && latest.config.sshUser) || "admin";

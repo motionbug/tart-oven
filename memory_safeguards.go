@@ -58,7 +58,3 @@ func deferVMStartForHistory(history []PerformanceSample) bool {
 	}
 	return false
 }
-
-func stopAllowedForState(state string) bool {
-	return state != "suspended"
-}

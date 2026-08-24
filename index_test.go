@@ -311,7 +311,7 @@ func TestMemoryRecoveryActionsOnlyEnableForRunningVMs(t *testing.T) {
 	renderTable := sourceSection(t, string(b), `function renderTable`, `// keep "time remaining"`)
 	for _, want := range []string{
 		`const notRunning = vm.state !== "running" ? " disabled" : "";`,
-		`const stopDisabled = vm.state === "suspended" ? " disabled" : busy;`,
+		`const stopDisabled = busy;`,
 		`act(\'stop\'`,
 	} {
 		if !strings.Contains(renderTable, want) {

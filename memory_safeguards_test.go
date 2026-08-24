@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -125,68 +122,5 @@ func TestVMStartPressureGateKeepsLastAvailableStateAcrossCollectionFailure(t *te
 	history = append(history, PerformanceSample{MemoryPressure: "warning", PressureAvailable: true})
 	if deferVMStartForHistory(history) {
 		t.Fatal("available warning sample did not clear critical-pressure deferral")
-	}
-}
-
-func TestDoSuspendUsesTartSuspendAndMarksVMResumable(t *testing.T) {
-	m := newTestManager(t)
-	m.vms["base"] = &VM{Name: "base", State: "running"}
-	var gotArgs []string
-	m.tartOperation = func(_ context.Context, _ string, args ...string) ([]byte, error) {
-		gotArgs = append([]string(nil), args...)
-		return nil, nil
-	}
-
-	m.doSuspend("base")
-
-	if got := strings.Join(gotArgs, " "); got != "suspend base" {
-		t.Fatalf("tart operation = %q, want %q", got, "suspend base")
-	}
-	if got := m.vms["base"].State; got != "suspended" {
-		t.Fatalf("state = %q, want suspended", got)
-	}
-	if m.busy["base"] {
-		t.Fatal("suspend left VM busy")
-	}
-}
-
-func TestVMRecoveryActionRoutesRequireAName(t *testing.T) {
-	m := newTestManager(t)
-	for _, path := range []string{"/api/suspend"} {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
-			req.Header.Set("Content-Type", "application/json")
-			res := httptest.NewRecorder()
-
-			m.routes().ServeHTTP(res, req)
-
-			if res.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusBadRequest, res.Body.String())
-			}
-		})
-	}
-}
-
-func TestSuspendedVMRemainsActiveForConfigurationChanges(t *testing.T) {
-	m := newTestManager(t)
-	m.vms["saved"] = &VM{Name: "saved", State: "suspended"}
-	m.vms["off"] = &VM{Name: "off", State: "stopped"}
-
-	if !m.isActive("saved") {
-		t.Fatal("suspended VM was treated as editable stopped VM")
-	}
-	if m.isActive("off") {
-		t.Fatal("stopped VM was treated as active")
-	}
-}
-
-func TestExistingStopPathRejectsSuspendedSnapshotState(t *testing.T) {
-	if stopAllowedForState("suspended") {
-		t.Fatal("suspended VM can enter destructive Stop fallback")
-	}
-	for _, state := range []string{"running", "stopped"} {
-		if !stopAllowedForState(state) {
-			t.Fatalf("existing Stop behavior changed for %q", state)
-		}
 	}
 }

@@ -407,7 +407,7 @@ func inDailyWindow(now time.Time, start, stop string) bool {
 }
 
 // VM is a single managed virtual machine. State is one of:
-// stopped | starting | running | stopping | suspending | suspended.
+// stopped | starting | running | stopping.
 type VM struct {
 	Name         string    `json:"name"`
 	Source       string    `json:"source,omitempty"`
@@ -488,7 +488,6 @@ type Manager struct {
 	reload               chan struct{} // poke the scheduler when interval changes
 	mdmCopier            mdmProfileCopier
 	mdmResolveIP         mdmIPResolver
-	tartOperation        func(context.Context, string, ...string) ([]byte, error)
 	tartOutputOperation  func(context.Context, string, ...string) (string, error)
 	sshOperation         func(context.Context, string, string, string) execResult
 	runningProbe         func(string) (bool, error)
@@ -1484,12 +1483,6 @@ func (m *Manager) doStop(name string) {
 		m.mu.Unlock()
 		return
 	}
-	if !stopAllowedForState(vm.State) {
-		vm.LastError = "resume the suspended VM before using Stop"
-		m.mu.Unlock()
-		m.broadcast()
-		return
-	}
 	m.setBusy(name, true)
 	vm.State = "stopping"
 	home := m.cfg.VMStoragePath
@@ -1548,13 +1541,6 @@ func (m *Manager) doStop(name string) {
 	log.Printf("stopped %q", name)
 }
 
-func (m *Manager) runTartOperation(ctx context.Context, home string, args ...string) ([]byte, error) {
-	if m.tartOperation != nil {
-		return m.tartOperation(ctx, home, args...)
-	}
-	return m.tartCmdCtx(ctx, home, args...).CombinedOutput()
-}
-
 func (m *Manager) runSSHOperation(ctx context.Context, name, command, password string) execResult {
 	if m.sshOperation != nil {
 		return m.sshOperation(ctx, name, command, password)
@@ -1587,44 +1573,6 @@ func (m *Manager) finishVMRun(name, state string) {
 	m.save()
 	m.mu.Unlock()
 	m.broadcast()
-}
-
-// doSuspend asks Tart to snapshot and stop an eligible suspendable VM. It is
-// deliberately separate from doStop so it can never fall back to force-stop.
-func (m *Manager) doSuspend(name string) {
-	m.mu.Lock()
-	vm := m.vms[name]
-	if vm == nil || vm.State != "running" || m.busy[name] {
-		m.mu.Unlock()
-		return
-	}
-	m.setBusy(name, true)
-	vm.State = "suspending"
-	vm.LastError = ""
-	home := m.cfg.VMStoragePath
-	m.mu.Unlock()
-	m.broadcast()
-
-	m.logln("$ tart suspend %s", name)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	out, err := m.runTartOperation(ctx, home, "suspend", name)
-	cancel()
-	if err != nil {
-		message := fmt.Sprintf("suspend failed: %v%s", err, prefixIfNotEmpty(": ", strings.TrimSpace(string(out))))
-		m.mu.Lock()
-		if vm := m.vms[name]; vm != nil {
-			vm.State = "running"
-			vm.LastError = message
-		}
-		m.setBusy(name, false)
-		m.mu.Unlock()
-		m.broadcast()
-		m.logln("suspend %s failed: %s", name, message)
-		return
-	}
-
-	m.finishVMRun(name, "suspended")
-	m.logln("suspended %s", name)
 }
 
 func (m *Manager) vmRunningState(name string) (bool, error) {
@@ -2182,7 +2130,7 @@ func (m *Manager) isActive(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm := m.vms[name]
-	return vm != nil && (vm.State == "running" || vm.State == "starting" || vm.State == "suspending" || vm.State == "suspended" || m.busy[name])
+	return vm != nil && (vm.State == "running" || vm.State == "starting" || m.busy[name])
 }
 
 // ---------------------------------------------------------------------------
@@ -2667,16 +2615,6 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		go m.doStop(name)
-		writeJSON(w, map[string]bool{"ok": true})
-	})
-
-	mux.HandleFunc("/api/suspend", func(w http.ResponseWriter, r *http.Request) {
-		name, err := decodeName(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		go m.doSuspend(name)
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
