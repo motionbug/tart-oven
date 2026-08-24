@@ -738,9 +738,88 @@ type arpNeighbor struct {
 	MAC net.HardwareAddr
 }
 
+// parseFlexMAC normalizes single-digit hex octets (common in Darwin arp output)
+// into valid 2-digit hex pairs so net.ParseMAC can parse them correctly.
+func parseFlexMAC(s string) (net.HardwareAddr, error) {
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	if len(parts) == 6 {
+		for i, p := range parts {
+			if len(p) == 1 {
+				parts[i] = "0" + p
+			}
+		}
+		return net.ParseMAC(strings.Join(parts, ":"))
+	}
+	return net.ParseMAC(strings.TrimSpace(s))
+}
+
+// parseARPOutput parses the output of `arp -an` on macOS.
+func parseARPOutput(output string) []arpNeighbor {
+	var entries []arpNeighbor
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "? (") {
+			continue
+		}
+		openParen := strings.Index(line, "(")
+		closeParen := strings.Index(line, ") at ")
+		if openParen < 0 || closeParen <= openParen {
+			continue
+		}
+		ipStr := line[openParen+1 : closeParen]
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		rest := line[closeParen+len(") at "):]
+		fields := strings.Fields(rest)
+		if len(fields) < 1 {
+			continue
+		}
+		mac, err := parseFlexMAC(fields[0])
+		if err != nil {
+			continue
+		}
+		entries = append(entries, arpNeighbor{IP: ip, MAC: mac})
+	}
+	return entries
+}
+
+// hostARPNeighbors retrieves active ARP entries by querying `arp -an` and Darwin routing table.
+func hostARPNeighbors() ([]arpNeighbor, error) {
+	var all []arpNeighbor
+	seen := make(map[string]bool)
+
+	// 1. Query /usr/sbin/arp -an
+	for _, cmdPath := range []string{"/usr/sbin/arp", "arp"} {
+		out, err := exec.Command(cmdPath, "-an").Output()
+		if err == nil && len(out) > 0 {
+			for _, entry := range parseARPOutput(string(out)) {
+				key := entry.IP.String() + "|" + entry.MAC.String()
+				if !seen[key] {
+					seen[key] = true
+					all = append(all, entry)
+				}
+			}
+			break
+		}
+	}
+
+	// 2. Query Darwin routing table
+	native, _ := nativeARPNeighbors()
+	for _, entry := range native {
+		key := entry.IP.String() + "|" + entry.MAC.String()
+		if !seen[key] {
+			seen[key] = true
+			all = append(all, entry)
+		}
+	}
+
+	return all, nil
+}
+
 // resolveVMIP reads Tart's configured MAC address for a VM and matches it
-// against the host's native neighbor table. Reading the table in-process avoids
-// relying on `arp` output, which macOS may suppress for service descendants.
+// against the host's neighbor table.
 func resolveVMIP(home, name string, neighbors func() ([]arpNeighbor, error)) (string, error) {
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return "", fmt.Errorf("invalid VM name %q", name)
@@ -749,7 +828,11 @@ func resolveVMIP(home, name string, neighbors func() ([]arpNeighbor, error)) (st
 	configPath := filepath.Join(home, "vms", name, "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return "", fmt.Errorf("read VM network config: %w", err)
+		configPath = filepath.Join(home, name, "config.json")
+		data, err = os.ReadFile(configPath)
+		if err != nil {
+			return "", fmt.Errorf("read VM network config: %w", err)
+		}
 	}
 	var config struct {
 		MACAddress string `json:"macAddress"`
@@ -757,7 +840,7 @@ func resolveVMIP(home, name string, neighbors func() ([]arpNeighbor, error)) (st
 	if err := json.Unmarshal(data, &config); err != nil {
 		return "", fmt.Errorf("parse VM network config: %w", err)
 	}
-	target, err := net.ParseMAC(config.MACAddress)
+	target, err := parseFlexMAC(config.MACAddress)
 	if err != nil {
 		return "", fmt.Errorf("parse VM MAC address %q: %w", config.MACAddress, err)
 	}
@@ -774,10 +857,7 @@ func resolveVMIP(home, name string, neighbors func() ([]arpNeighbor, error)) (st
 	return "", fmt.Errorf("no neighbor-table entry for VM MAC %s", target)
 }
 
-// nativeARPNeighbors reads the Darwin routing information base directly. Tart
-// normally shells out to `arp -an`; that command can return empty output when
-// Tart is launched as a descendant of this Go LaunchAgent even though the same
-// neighbor entries are present here.
+// nativeARPNeighbors reads the Darwin routing information base directly.
 func nativeARPNeighbors() ([]arpNeighbor, error) {
 	ribType := route.RIBType(syscall.NET_RT_FLAGS)
 	rib, err := route.FetchRIB(syscall.AF_UNSPEC, ribType, syscall.RTF_LLINFO)
@@ -1296,11 +1376,28 @@ func (m *Manager) doRun(name, trigger string) {
 	}
 
 	// Resolve the IP by matching Tart's configured VM MAC against the host's
-	// native neighbor table. Keep polling until the guest emits network traffic
+	// ARP table and Tart IP resolvers. Keep polling until the guest receives an IP
 	// or the configured boot deadline expires.
 	ipCtx, cancelIP := context.WithTimeout(context.Background(), time.Duration(bootTimeout)*time.Second)
-	ip, ipErr := pollVMIP(ipCtx, time.Second, func(context.Context) (string, error) {
-		return resolveVMIP(home, name, nativeARPNeighbors)
+	ip, ipErr := pollVMIP(ipCtx, 1500*time.Millisecond, func(ctx context.Context) (string, error) {
+		ip, err := resolveVMIP(home, name, hostARPNeighbors)
+		if err == nil && strings.TrimSpace(ip) != "" {
+			return strings.TrimSpace(ip), nil
+		}
+		// Fallback 1: Tart CLI with ARP resolver
+		out, terr := m.tartCmdCtx(ctx, home, "ip", name, "--wait", "1", "--resolver", "arp").Output()
+		if terr == nil && strings.TrimSpace(string(out)) != "" {
+			return strings.TrimSpace(string(out)), nil
+		}
+		// Fallback 2: Tart CLI default resolver
+		out, terr = m.tartCmdCtx(ctx, home, "ip", name, "--wait", "1").Output()
+		if terr == nil && strings.TrimSpace(string(out)) != "" {
+			return strings.TrimSpace(string(out)), nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return "", errors.New("no IP resolved yet")
 	})
 	cancelIP()
 

@@ -131,10 +131,49 @@ func TestARPNeighborsFromRouteMessages(t *testing.T) {
 	}
 }
 
-func TestNativeARPNeighborsReadable(t *testing.T) {
-	if _, err := nativeARPNeighbors(); err != nil {
-		t.Fatalf("nativeARPNeighbors returned error: %v", err)
+func TestParseFlexMAC(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"4e:4c:40:94:26:36", "4e:4c:40:94:26:36"},
+		{"74:ac:b9:46:6b:4", "74:ac:b9:46:6b:04"},
+		{"ba:6d:ed:c8:68:a", "ba:6d:ed:c8:68:0a"},
+		{"0:e0:4c:0:2:15", "00:e0:4c:00:02:15"},
 	}
+	for _, tt := range tests {
+		got, err := parseFlexMAC(tt.input)
+		if err != nil {
+			t.Fatalf("parseFlexMAC(%q) error: %v", tt.input, err)
+		}
+		if got.String() != tt.want {
+			t.Errorf("parseFlexMAC(%q) = %q, want %q", tt.input, got.String(), tt.want)
+		}
+	}
+}
+
+func TestParseARPOutput(t *testing.T) {
+	sample := `? (192.168.1.1) at 74:ac:b9:46:6b:4 on en8 ifscope [ethernet]
+? (192.168.1.204) at 4e:4c:40:94:26:36 on en8 [ethernet]
+? (192.168.1.103) at 0:e0:4c:0:2:15 on en8 ifscope permanent [ethernet]`
+
+	entries := parseARPOutput(sample)
+	if len(entries) != 3 {
+		t.Fatalf("parseARPOutput parsed %d entries, want 3", len(entries))
+	}
+	if entries[1].IP.String() != "192.168.1.204" || entries[1].MAC.String() != "4e:4c:40:94:26:36" {
+		t.Errorf("entry 1 = %s/%s, want 192.168.1.204/4e:4c:40:94:26:36", entries[1].IP, entries[1].MAC)
+	}
+	if entries[0].IP.String() != "192.168.1.1" || entries[0].MAC.String() != "74:ac:b9:46:6b:04" {
+		t.Errorf("entry 0 = %s/%s, want 192.168.1.1/74:ac:b9:46:6b:04", entries[0].IP, entries[0].MAC)
+	}
+}
+
+func TestHostARPNeighbors(t *testing.T) {
+	neighbors, err := hostARPNeighbors()
+	if err != nil {
+		t.Fatalf("hostARPNeighbors returned error: %v", err)
+	}
+	t.Logf("hostARPNeighbors found %d active ARP neighbors", len(neighbors))
 }
 
 func mustParseMAC(t *testing.T, value string) net.HardwareAddr {
