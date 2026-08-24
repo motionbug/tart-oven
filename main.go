@@ -209,44 +209,60 @@ func expandHome(path string) string {
 // Config is the user-tunable state. It is persisted and editable from the
 // dashboard. Durations are kept as plain minutes/seconds so the JSON and the
 // HTML form stay simple.
+type JamfProfile struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	BaseURL        string `json:"baseUrl"`
+	InvitationCode string `json:"invitationCode,omitempty"`
+}
+
+type jamfProfileView struct {
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	BaseURL           string `json:"baseUrl"`
+	InvitationCodeSet bool   `json:"invitationCodeSet"`
+}
+
 type Config struct {
-	Listen                  string   `json:"listen"`                  // host:port to bind, e.g. 0.0.0.0:8080
-	VMStoragePath           string   `json:"vmStoragePath"`           // becomes TART_HOME on every tart call
-	SharedDir               string   `json:"sharedDir"`               // host_resources bind mount
-	TartAppPath             string   `json:"tartAppPath"`             // full path to the tart binary
-	IntervalMinutes         int      `json:"intervalMinutes"`         // how often the scheduler acts
-	WindowMinutes           int      `json:"windowMinutes"`           // how long each VM stays up
-	MaxConcurrent           int      `json:"maxConcurrent"`           // max VMs running at once
-	SchedulerMode           string   `json:"schedulerMode"`           // "random" | "sequential" (alphabetical)
-	Excluded                []string `json:"excluded"`                // VM names never auto-selected
-	ExcludeOCIFromScheduler bool     `json:"excludeOciFromScheduler"` // keep cached OCI images clone-only by default
-	JamfRecon               bool     `json:"jamfRecon"`               // run `jamf recon` after start/stop
-	Paused                  bool     `json:"paused"`                  // global scheduler pause
-	DailyEnabled            bool     `json:"dailyEnabled"`            // gate auto-runs to a daily time window
-	DailyStart              string   `json:"dailyStart"`              // "HH:MM" — begin running VMs
-	DailyStop               string   `json:"dailyStop"`               // "HH:MM" — stop running VMs
-	JamfBaseURL             string   `json:"jamfBaseUrl"`
-	JamfInvitationCode      string   `json:"jamfInvitationCode"`
-	SSHUser                 string   `json:"sshUser"`
-	SSHPassword             string   `json:"sshPassword"`     // guest SSH/sudo password; write-only
-	SSHKey                  string   `json:"sshKey"`          // optional identity file path
-	SSHTimeoutSec           int      `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand           string   `json:"statusCommand"`   // command for "Get info"
-	ShutdownCommand         string   `json:"shutdownCommand"` // SSH command for a clean guest shutdown
-	ShutdownWaitSec         int      `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
-	RunArgs                 string   `json:"runArgs"`         // extra args appended to every `tart run`
-	NetPriority             string   `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec          int      `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
-	HistoryDays             int      `json:"historyDays"`     // run-history retention in days
-	LogPath                 string   `json:"logPath"`         // path to log file (rotation at 5MB)
-	ServerLabel             string   `json:"serverLabel"`     // custom label to identify this server instance
-	ShowRunningOnly         bool     `json:"showRunningOnly"` // dashboard filter: show only running VMs
+	Listen                  string        `json:"listen"`                  // host:port to bind, e.g. 0.0.0.0:8080
+	VMStoragePath           string        `json:"vmStoragePath"`           // becomes TART_HOME on every tart call
+	SharedDir               string        `json:"sharedDir"`               // host_resources bind mount
+	TartAppPath             string        `json:"tartAppPath"`             // full path to the tart binary
+	IntervalMinutes         int           `json:"intervalMinutes"`         // how often the scheduler acts
+	WindowMinutes           int           `json:"windowMinutes"`           // how long each VM stays up
+	MaxConcurrent           int           `json:"maxConcurrent"`           // max VMs running at once
+	SchedulerMode           string        `json:"schedulerMode"`           // "random" | "sequential" (alphabetical)
+	Excluded                []string      `json:"excluded"`                // VM names never auto-selected
+	ExcludeOCIFromScheduler bool          `json:"excludeOciFromScheduler"` // keep cached OCI images clone-only by default
+	JamfRecon               bool          `json:"jamfRecon"`               // run `jamf recon` after start/stop
+	Paused                  bool          `json:"paused"`                  // global scheduler pause
+	DailyEnabled            bool          `json:"dailyEnabled"`            // gate auto-runs to a daily time window
+	DailyStart              string        `json:"dailyStart"`              // "HH:MM" — begin running VMs
+	DailyStop               string        `json:"dailyStop"`               // "HH:MM" — stop running VMs
+	JamfProfiles            []JamfProfile `json:"jamfProfiles,omitempty"`
+	JamfBaseURL             string        `json:"jamfBaseUrl,omitempty"`
+	JamfInvitationCode      string        `json:"jamfInvitationCode,omitempty"`
+	SSHUser                 string        `json:"sshUser"`
+	SSHPassword             string        `json:"sshPassword"`     // guest SSH/sudo password; write-only
+	SSHKey                  string        `json:"sshKey"`          // optional identity file path
+	SSHTimeoutSec           int           `json:"sshTimeoutSec"`   // ssh connect timeout
+	StatusCommand           string        `json:"statusCommand"`   // command for "Get info"
+	ShutdownCommand         string        `json:"shutdownCommand"` // SSH command for a clean guest shutdown
+	ShutdownWaitSec         int           `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
+	RunArgs                 string        `json:"runArgs"`         // extra args appended to every `tart run`
+	NetPriority             string        `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec          int           `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
+	HistoryDays             int           `json:"historyDays"`     // run-history retention in days
+	LogPath                 string        `json:"logPath"`         // path to log file (rotation at 5MB)
+	ServerLabel             string        `json:"serverLabel"`     // custom label to identify this server instance
+	ShowRunningOnly         bool          `json:"showRunningOnly"` // dashboard filter: show only running VMs
 }
 
 type configView struct {
 	Config
-	SSHPasswordSet        bool `json:"sshPasswordSet"`
-	JamfInvitationCodeSet bool `json:"jamfInvitationCodeSet"`
+	JamfProfiles          []jamfProfileView `json:"jamfProfiles"`
+	SSHPasswordSet        bool              `json:"sshPasswordSet"`
+	JamfInvitationCodeSet bool              `json:"jamfInvitationCodeSet"`
 }
 
 func newConfigView(cfg Config) configView {
@@ -254,9 +270,18 @@ func newConfigView(cfg Config) configView {
 		Config:                cfg,
 		SSHPasswordSet:        cfg.SSHPassword != "",
 		JamfInvitationCodeSet: cfg.JamfInvitationCode != "",
+		JamfProfiles:          make([]jamfProfileView, len(cfg.JamfProfiles)),
 	}
 	view.SSHPassword = ""
 	view.JamfInvitationCode = ""
+	for i, p := range cfg.JamfProfiles {
+		view.JamfProfiles[i] = jamfProfileView{
+			ID:                p.ID,
+			Name:              p.Name,
+			BaseURL:           p.BaseURL,
+			InvitationCodeSet: p.InvitationCode != "",
+		}
+	}
 	return view
 }
 
@@ -2390,18 +2415,34 @@ func safeMDMStageError(stage mdmStage) (int, string) {
 	}
 }
 
+type mdmProfileRequest struct {
+	Name        string `json:"name"`
+	ProfileID   string `json:"profileId,omitempty"`
+	SSHUser     string `json:"sshUser,omitempty"`
+	SSHPassword string `json:"sshPassword,omitempty"`
+}
+
 func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMDMProfileError(w, http.StatusMethodNotAllowed, "", "", "method not allowed")
 		return
 	}
 
-	name, err := decodeName(r)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeMDMProfileError(w, http.StatusBadRequest, "", "", "invalid request")
 		return
 	}
-	name = strings.TrimSpace(name)
+	var in mdmProfileRequest
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeMDMProfileError(w, http.StatusBadRequest, "", "", "invalid request")
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeMDMProfileError(w, http.StatusBadRequest, "", "", "missing name")
+		return
+	}
 
 	m.mu.Lock()
 	cfg := m.cfg
@@ -2412,13 +2453,43 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.Unlock()
 
+	// Select target Jamf profile:
+	// 1. By profileId if provided
+	// 2. First configured profile in cfg.JamfProfiles if available
+	// 3. Fallback to legacy cfg.JamfBaseURL and cfg.JamfInvitationCode
+	var targetProfile JamfProfile
+	if in.ProfileID != "" {
+		for _, p := range cfg.JamfProfiles {
+			if p.ID == in.ProfileID {
+				targetProfile = p
+				break
+			}
+		}
+	}
+	if targetProfile.BaseURL == "" && len(cfg.JamfProfiles) > 0 && in.ProfileID == "" {
+		targetProfile = cfg.JamfProfiles[0]
+	}
+	if targetProfile.BaseURL == "" {
+		targetProfile = JamfProfile{
+			Name:           "Default Server",
+			BaseURL:        cfg.JamfBaseURL,
+			InvitationCode: cfg.JamfInvitationCode,
+		}
+	}
+
 	username, password := effectiveSSHCredentials(cfg, &vmCopy)
+	if strings.TrimSpace(in.SSHUser) != "" {
+		username = strings.TrimSpace(in.SSHUser)
+	}
+	if in.SSHPassword != "" {
+		password = in.SSHPassword
+	}
 	sshTimeout := cfg.SSHTimeoutSec
 	if sshTimeout < 1 {
 		sshTimeout = 30
 	}
-	baseURL, baseURLErr := normalizeJamfBaseURL(cfg.JamfBaseURL)
-	if baseURLErr != nil || baseURL == "" || strings.TrimSpace(cfg.JamfInvitationCode) == "" ||
+	baseURL, baseURLErr := normalizeJamfBaseURL(targetProfile.BaseURL)
+	if baseURLErr != nil || baseURL == "" || strings.TrimSpace(targetProfile.InvitationCode) == "" ||
 		strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
 		status, message := safeMDMStageError(mdmStageConfiguration)
 		writeMDMProfileError(w, status, name, mdmStageConfiguration, message)
@@ -2449,7 +2520,7 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 
 	profile, payloadUUID, err := generateMDMProfile(mdmProfileInput{
 		BaseURL:        baseURL,
-		InvitationCode: cfg.JamfInvitationCode,
+		InvitationCode: targetProfile.InvitationCode,
 	}, cryptorand.Reader)
 	if err != nil {
 		log.Printf("MDM profile copy failed for VM %q at stage %s", name, mdmStageConfiguration)
@@ -2938,6 +3009,21 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if raw, ok := fields["jamfProfiles"]; ok {
+		var list []JamfProfile
+		if err := json.Unmarshal(raw, &list); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, p := range list {
+			if strings.TrimSpace(p.BaseURL) != "" {
+				if _, err := normalizeJamfBaseURL(p.BaseURL); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+	}
 
 	m.mu.Lock()
 	prevPaused := m.cfg.Paused
@@ -3042,6 +3128,37 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 			if _, ok := parseHHMM(v); ok {
 				m.cfg.DailyStop = v
 			}
+		}
+	}
+	if raw, ok := fields["jamfProfiles"]; ok {
+		var list []JamfProfile
+		if json.Unmarshal(raw, &list) == nil {
+			existingMap := make(map[string]string)
+			for _, p := range m.cfg.JamfProfiles {
+				existingMap[p.ID] = p.InvitationCode
+			}
+			var cleaned []JamfProfile
+			for i, p := range list {
+				p.Name = strings.TrimSpace(p.Name)
+				if p.Name == "" {
+					p.Name = fmt.Sprintf("Jamf Server %d", i+1)
+				}
+				if p.ID == "" {
+					p.ID = fmt.Sprintf("jamf-%d", time.Now().UnixNano()+int64(i))
+				}
+				if norm, err := normalizeJamfBaseURL(p.BaseURL); err == nil && norm != "" {
+					p.BaseURL = norm
+				}
+				if strings.TrimSpace(p.InvitationCode) == "" {
+					p.InvitationCode = existingMap[p.ID]
+				} else {
+					p.InvitationCode = strings.TrimSpace(p.InvitationCode)
+				}
+				if p.BaseURL != "" {
+					cleaned = append(cleaned, p)
+				}
+			}
+			m.cfg.JamfProfiles = cleaned
 		}
 	}
 	if raw, ok := fields["jamfBaseUrl"]; ok {

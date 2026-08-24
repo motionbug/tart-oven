@@ -185,3 +185,48 @@ func TestHandleConfigJamfPartialSavePreservesAllSchedulerSettings(t *testing.T) 
 	}
 }
 
+func TestHandleConfigJamfProfiles(t *testing.T) {
+	m := newTestManager(t)
+	// Initial save with two profiles
+	body := `{"jamfProfiles":[
+		{"id":"p1","name":"Production","baseUrl":"https://prod.jamfcloud.com","invitationCode":"secret-prod-123"},
+		{"id":"p2","name":"Staging","baseUrl":"https://staging.jamfcloud.com/","invitationCode":"secret-staging-456"}
+	]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	m.handleConfig(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if len(m.cfg.JamfProfiles) != 2 {
+		t.Fatalf("len(JamfProfiles) = %d, want 2", len(m.cfg.JamfProfiles))
+	}
+	if m.cfg.JamfProfiles[1].BaseURL != "https://staging.jamfcloud.com" {
+		t.Errorf("BaseURL not normalized: %q", m.cfg.JamfProfiles[1].BaseURL)
+	}
+
+	// Update profiles omitting invitation code for p1 (should preserve secret)
+	bodyUpdate := `{"jamfProfiles":[
+		{"id":"p1","name":"Production Main","baseUrl":"https://prod.jamfcloud.com","invitationCode":""},
+		{"id":"p3","name":"Sandbox","baseUrl":"https://sandbox.jamfcloud.com","invitationCode":"secret-sb-789"}
+	]}`
+	req2 := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(bodyUpdate))
+	res2 := httptest.NewRecorder()
+	m.handleConfig(res2, req2)
+
+	if res2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res2.Code, http.StatusOK, res2.Body.String())
+	}
+	if len(m.cfg.JamfProfiles) != 2 {
+		t.Fatalf("len(JamfProfiles) = %d, want 2", len(m.cfg.JamfProfiles))
+	}
+	if m.cfg.JamfProfiles[0].Name != "Production Main" {
+		t.Errorf("Name = %q, want Production Main", m.cfg.JamfProfiles[0].Name)
+	}
+	if m.cfg.JamfProfiles[0].InvitationCode != "secret-prod-123" {
+		t.Errorf("InvitationCode was not preserved: %q", m.cfg.JamfProfiles[0].InvitationCode)
+	}
+}
+
+

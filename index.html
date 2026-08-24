@@ -421,20 +421,71 @@
 
     <div class="panel">
       <h2>Prepare base VM for Jamf</h2>
-      <p class="muted">Prepare one running base VM by copying the Jamf enrollment profile to its Desktop. Do not install or enroll the base VM; stop it and clone it so every clone starts with the profile ready. Install the profile separately inside each clone.</p>
-      <div class="grid">
-        <div class="field"><label>Jamf Pro base URL</label><input type="url" id="jamfBaseUrl" placeholder="https://tenant.jamfcloud.com"></div>
-        <div class="field"><label>Invitation ID</label><input type="password" id="jamfInvitationCode" autocomplete="new-password"><small>Enter the value after invitation=, not the full URL</small></div>
-        <div class="field"><label>Default SSH username</label><input type="text" id="sshUser" value="admin"><small>Per-VM credentials override this value</small></div>
-        <div class="field"><label>Default SSH password</label><input type="password" id="sshPassword" autocomplete="new-password"></div>
+      <p class="muted">Prepare one running base VM by copying the Jamf enrollment profile to its Desktop. Do not install or enroll the base VM; stop it and clone it so every clone starts with the profile ready. Install the profile separately inside each clone. Configure one or more Jamf Pro server profiles (e.g. Production, Staging, Sandbox), then deploy the chosen profile to any running base VM.</p>
+
+      <div style="margin-top: 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);">Jamf Server Profiles</h3>
+        <button class="ghost" id="addJamfProfileBtn" style="font-size: 12px; padding: 4px 10px;">+ Add Jamf Server</button>
       </div>
-      <div class="actions"><button id="saveJamfBtn">Save settings</button><span id="jamfSaveStatus" class="muted"></span></div>
-      <div class="ssh-row">
-        <select id="mdmTarget"></select>
+
+      <div class="table-wrap" style="margin-bottom: 14px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Server Name</th>
+              <th>Jamf Pro Base URL</th>
+              <th>Invitation</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="jamfProfileRows">
+            <tr><td colspan="4" class="muted">No Jamf server profiles added yet. Click <b>+ Add Jamf Server</b> to create one.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Add / Edit Profile Form -->
+      <div id="jamfProfileEditor" style="display: none; background: var(--bg-hover, rgba(255,255,255,0.03)); border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; border-radius: 8px;">
+        <h3 id="jamfEditorTitle" style="margin: 0 0 10px 0; font-size: 14px;">Add Jamf Server Profile</h3>
+        <input type="hidden" id="jamfProfileId">
+        <div class="grid">
+          <div class="field"><label>Server Name</label><input type="text" id="jamfProfileName" placeholder="e.g. Production, Sandbox, Staging"></div>
+          <div class="field"><label>Jamf Pro base URL</label><input type="url" id="jamfBaseUrl" placeholder="https://tenant.jamfcloud.com"></div>
+          <div class="field" style="grid-column: span 2;"><label>Invitation ID</label><input type="password" id="jamfInvitationCode" autocomplete="new-password" placeholder="Enter invitation value"><small>Enter the value after invitation=, not the full URL</small></div>
+        </div>
+        <div class="actions" style="margin-top: 10px;">
+          <button id="saveJamfProfileBtn">Save Profile</button>
+          <button class="ghost" id="cancelJamfProfileBtn">Cancel</button>
+          <span id="jamfSaveStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <h3 style="margin: 18px 0 10px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);">Deploy MDM Enrollment Profile</h3>
+      <div class="grid" style="margin-bottom: 12px;">
+        <div class="field">
+          <label>Target Running VM</label>
+          <select id="mdmTarget"></select>
+        </div>
+        <div class="field">
+          <label>Jamf Server Profile</label>
+          <select id="mdmProfileSelect"></select>
+        </div>
+        <div class="field">
+          <label>SSH Username</label>
+          <input type="text" id="mdmSshUser" placeholder="admin">
+          <small>Defaults to configuration SSH username</small>
+        </div>
+        <div class="field">
+          <label>SSH Password</label>
+          <input type="password" id="mdmSshPassword" placeholder="•••••••• (saved)">
+          <small>Leave blank to use saved password</small>
+        </div>
+      </div>
+      <div class="ssh-row" style="margin-top: 10px;">
         <button id="copyMdmBtn">Copy profile to Desktop</button>
         <span class="muted mono">~/Desktop/mdm_enroll.mobileconfig</span>
       </div>
-      <div id="mdmCopyStatus" class="muted"></div>
+      <div id="mdmCopyStatus" class="muted" style="margin-top: 6px;"></div>
     </div>
 
     <div class="panel">
@@ -985,6 +1036,7 @@ function fillConfig(c) {
   set("serverLabel", c.serverLabel || "");
   set("logPath", c.logPath || "");
   document.getElementById("showRunningOnly").checked = !!c.showRunningOnly;
+  renderJamfProfiles();
   configLoaded = true;
 }
 function setSavedSecretPlaceholder(id, isSaved) {
@@ -1005,7 +1057,6 @@ function readConfig() {
     dailyStart: str("dailyStart"), dailyStop: str("dailyStop"),
     excluded,
     paused: latest ? latest.config.paused : false,
-    jamfBaseUrl: str("jamfBaseUrl"), jamfInvitationCode: str("jamfInvitationCode"),
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
@@ -1022,38 +1073,198 @@ async function saveConfig(extra, statusId) {
     });
     if (res.ok) {
       document.getElementById("sshPassword").value = "";
-      document.getElementById("jamfInvitationCode").value = "";
     }
     const errorText = res.ok ? "" : await res.text();
     if (s) { s.textContent = res.ok ? "saved ✓" : (errorText || "save failed"); setTimeout(() => s.textContent = "", 2500); }
   } catch (e) { if (s) s.textContent = "error: " + e.message; }
 }
-async function saveJamfConfig() {
-  const s = document.getElementById("jamfSaveStatus");
-  const jamfBaseUrl = document.getElementById("jamfBaseUrl").value.trim();
-  const jamfInvitationCode = document.getElementById("jamfInvitationCode").value.trim();
-  const sshUser = document.getElementById("sshUser").value.trim();
-  const sshPassword = document.getElementById("sshPassword").value;
+
+// ---- Jamf Server Profiles Management ----
+function getJamfProfiles() {
+  if (latest && latest.config && Array.isArray(latest.config.jamfProfiles) && latest.config.jamfProfiles.length > 0) {
+    return latest.config.jamfProfiles;
+  }
+  if (latest && latest.config && latest.config.jamfBaseUrl) {
+    return [{
+      id: "default",
+      name: "Default Server",
+      baseUrl: latest.config.jamfBaseUrl,
+      invitationCodeSet: !!latest.config.jamfInvitationCodeSet
+    }];
+  }
+  return [];
+}
+
+function renderJamfProfiles() {
+  const profiles = getJamfProfiles();
+  const tb = document.getElementById("jamfProfileRows");
+  const sel = document.getElementById("mdmProfileSelect");
+  if (!tb || !sel) return;
+
+  if (!profiles.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted">No Jamf server profiles configured yet. Click <b>+ Add Jamf Server</b> to create one.</td></tr>';
+  } else {
+    tb.innerHTML = profiles.map(p => {
+      const invStatus = p.invitationCodeSet ? '<span style="color:var(--green)">•••••••• (saved)</span>' : '<span class="muted">not set</span>';
+      return '<tr>' +
+        '<td><b>' + esc(p.name || "Unnamed Server") + '</b></td>' +
+        '<td class="mono">' + esc(p.baseUrl || "") + '</td>' +
+        '<td>' + invStatus + '</td>' +
+        '<td style="text-align: right;">' +
+          '<button class="ghost" style="padding: 2px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditJamfProfile(\'' + esc(p.id) + '\')">Edit</button>' +
+          '<button class="ghost danger" style="padding: 2px 8px; font-size: 11px;" onclick="deleteJamfProfile(\'' + esc(p.id) + '\')">Delete</button>' +
+        '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  const prevVal = sel.value;
+  if (!profiles.length) {
+    sel.innerHTML = '<option value="">No server profiles configured</option>';
+  } else {
+    sel.innerHTML = profiles.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name) + ' (' + esc(p.baseUrl) + ')</option>').join("");
+    if (prevVal && profiles.some(p => p.id === prevVal)) {
+      sel.value = prevVal;
+    }
+  }
+
+  const sshUserEl = document.getElementById("mdmSshUser");
+  if (sshUserEl && !sshUserEl.value && latest && latest.config) {
+    sshUserEl.value = latest.config.sshUser || "admin";
+  }
+  const sshPwEl = document.getElementById("mdmSshPassword");
+  if (sshPwEl && latest && latest.config && latest.config.sshPasswordSet) {
+    sshPwEl.placeholder = "•••••••• (saved)";
+  }
+}
+
+function openAddJamfProfile() {
+  document.getElementById("jamfProfileEditor").style.display = "block";
+  document.getElementById("jamfEditorTitle").textContent = "Add Jamf Server Profile";
+  document.getElementById("jamfProfileId").value = "";
+  document.getElementById("jamfProfileName").value = "";
+  document.getElementById("jamfBaseUrl").value = "";
+  document.getElementById("jamfInvitationCode").value = "";
+  document.getElementById("jamfInvitationCode").placeholder = "Enter invitation value";
+  document.getElementById("jamfSaveStatus").textContent = "";
+  document.getElementById("jamfProfileName").focus();
+}
+
+function openEditJamfProfile(id) {
+  const profiles = getJamfProfiles();
+  const p = profiles.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById("jamfProfileEditor").style.display = "block";
+  document.getElementById("jamfEditorTitle").textContent = "Edit Jamf Server Profile";
+  document.getElementById("jamfProfileId").value = p.id;
+  document.getElementById("jamfProfileName").value = p.name || "";
+  document.getElementById("jamfBaseUrl").value = p.baseUrl || "";
+  document.getElementById("jamfInvitationCode").value = "";
+  document.getElementById("jamfInvitationCode").placeholder = p.invitationCodeSet ? "•••••••• (saved)" : "Enter invitation value";
+  document.getElementById("jamfSaveStatus").textContent = "";
+  document.getElementById("jamfProfileName").focus();
+}
+
+function closeJamfProfileEditor() {
+  document.getElementById("jamfProfileEditor").style.display = "none";
+  document.getElementById("jamfProfileId").value = "";
+  document.getElementById("jamfProfileName").value = "";
+  document.getElementById("jamfBaseUrl").value = "";
+  document.getElementById("jamfInvitationCode").value = "";
+  document.getElementById("jamfSaveStatus").textContent = "";
+}
+
+async function saveJamfProfile() {
+  const id = document.getElementById("jamfProfileId").value;
+  const name = document.getElementById("jamfProfileName").value.trim();
+  const baseUrl = document.getElementById("jamfBaseUrl").value.trim();
+  const invitationCode = document.getElementById("jamfInvitationCode").value.trim();
+  const statusEl = document.getElementById("jamfSaveStatus");
+
+  if (!name) {
+    statusEl.textContent = "Server name is required";
+    return;
+  }
+  if (!baseUrl) {
+    statusEl.textContent = "Jamf Pro base URL is required";
+    return;
+  }
+
+  statusEl.textContent = "saving…";
+  const profiles = getJamfProfiles().map(p => ({
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl
+  }));
+
+  if (id) {
+    const idx = profiles.findIndex(p => p.id === id);
+    if (idx >= 0) {
+      profiles[idx].name = name;
+      profiles[idx].baseUrl = baseUrl;
+      if (invitationCode) {
+        profiles[idx].invitationCode = invitationCode;
+      }
+    }
+  } else {
+    const newProfile = {
+      id: "jamf-" + Date.now(),
+      name,
+      baseUrl
+    };
+    if (invitationCode) {
+      newProfile.invitationCode = invitationCode;
+    }
+    profiles.push(newProfile);
+  }
+
   try {
-    if (s) s.textContent = "saving…";
-    const payload = { jamfBaseUrl, sshUser: sshUser || "admin" };
-    if (jamfInvitationCode) payload.jamfInvitationCode = jamfInvitationCode;
-    if (sshPassword) payload.sshPassword = sshPassword;
     const res = await api("/api/config", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jamfProfiles: profiles })
     });
-    if (res.ok) {
-      document.getElementById("sshPassword").value = "";
-      document.getElementById("jamfInvitationCode").value = "";
-      setSavedSecretPlaceholder("sshPassword", true);
-      setSavedSecretPlaceholder("jamfInvitationCode", true);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || "save failed");
     }
-    const errorText = res.ok ? "" : await res.text();
-    if (s) { s.textContent = res.ok ? "saved ✓" : (errorText || "save failed"); setTimeout(() => s.textContent = "", 2500); }
-  } catch (e) { if (s) s.textContent = "error: " + e.message; }
+    statusEl.textContent = "saved ✓";
+    setTimeout(() => {
+      closeJamfProfileEditor();
+    }, 600);
+  } catch (err) {
+    statusEl.textContent = "error: " + err.message;
+  }
 }
+
+async function deleteJamfProfile(id) {
+  const profiles = getJamfProfiles();
+  const target = profiles.find(p => p.id === id);
+  if (!target) return;
+  if (!confirm("Are you sure you want to delete Jamf profile \"" + (target.name || target.baseUrl) + "\"?")) {
+    return;
+  }
+  const updated = profiles.filter(p => p.id !== id).map(p => ({
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl
+  }));
+  try {
+    const res = await api("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jamfProfiles: updated })
+    });
+    if (!res.ok) throw new Error(await res.text());
+  } catch (err) {
+    toast("Delete error", err.message, "bad");
+  }
+}
+
 document.getElementById("saveBtn").onclick = () => saveConfig();
-document.getElementById("saveJamfBtn").onclick = saveJamfConfig;
+document.getElementById("addJamfProfileBtn").onclick = openAddJamfProfile;
+document.getElementById("cancelJamfProfileBtn").onclick = closeJamfProfileEditor;
+document.getElementById("saveJamfProfileBtn").onclick = saveJamfProfile;
 document.getElementById("pauseBtn").onclick = () => saveConfig({ paused: !(latest && latest.config.paused) });
 document.getElementById("refreshBtn").onclick = async (e) => {
   const btn = e.currentTarget;
@@ -1338,7 +1549,6 @@ function renderTable(vms) {
       '<td class="acts"><div class="row-actions">' +
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + stopDisabled + '>Stop</button>' +
-        '<button class="ghost" onclick="act(\'suspend\',\'' + n + '\')"' + notRunning + busy + ' title="Save eligible VM state and release its running host memory">Suspend</button>' +
         '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
         '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
         '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
@@ -1542,6 +1752,7 @@ function fillMgmtSelects(vms) {
   if (!running.length) {
     document.getElementById("mdmTarget").innerHTML = '<option value="">Start the base VM first</option>';
   }
+  renderJamfProfiles();
   updateMdmCopyButton(vms);
 }
 
@@ -1553,20 +1764,30 @@ function updateMdmCopyButton(vms) {
 
 async function copyMdmProfile() {
   const name = document.getElementById("mdmTarget").value;
+  const profileId = document.getElementById("mdmProfileSelect").value;
+  const sshUser = document.getElementById("mdmSshUser").value.trim();
+  const sshPassword = document.getElementById("mdmSshPassword").value;
   const status = document.getElementById("mdmCopyStatus");
+
   if (mdmCopyInFlight) return;
   if (!name) { status.textContent = "Start and select a base VM first."; return; }
+  if (!profileId) { status.textContent = "Select or create a Jamf server profile first."; return; }
+
   mdmCopyInFlight = true;
   updateMdmCopyButton();
   status.textContent = "Connecting and copying profile…";
   try {
+    const payload = { name, profileId };
+    if (sshUser) payload.sshUser = sshUser;
+    if (sshPassword) payload.sshPassword = sshPassword;
+
     const res = await api("/api/vm/mdm-profile", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error((data.stage ? data.stage + ": " : "") + (data.error || "copy failed"));
-    status.textContent = "Copied to " + data.name + " at " + data.path + " · UUID " + data.payloadUUID;
+    status.textContent = "Copied " + (data.profileName ? data.profileName + " profile" : "profile") + " to " + data.name + " at " + data.path + " · UUID " + data.payloadUUID;
   } catch (err) {
     status.textContent = "Copy failed — " + err.message;
   } finally {

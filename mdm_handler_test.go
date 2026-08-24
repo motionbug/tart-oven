@@ -433,3 +433,35 @@ func TestResolveMDMIPWithTartHonorsRequestCancellation(t *testing.T) {
 		t.Fatalf("error=%v, want context cancellation", err)
 	}
 }
+
+func TestHandleMDMProfileWithNamedProfileAndCredentialOverrides(t *testing.T) {
+	m := newMDMHandlerManager()
+	m.cfg.JamfProfiles = []JamfProfile{
+		{ID: "prod", Name: "Production", BaseURL: "https://prod.jamfcloud.com", InvitationCode: "prod-invite-999"},
+		{ID: "sandbox", Name: "Sandbox", BaseURL: "https://sandbox.jamfcloud.com", InvitationCode: "sandbox-invite-111"},
+	}
+	fake := &recordingMDMProfileCopier{}
+	m.mdmCopier = fake
+
+	// Request deployment with Sandbox profile and custom SSH credentials
+	reqBody := `{"name":"base","profileId":"sandbox","sshUser":"deploy-admin","sshPassword":"deploy-secret-password"}`
+	rr := performMDMProfileRequest(t, m, http.MethodPost, reqBody)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if fake.target.Username != "deploy-admin" || fake.target.Password != "deploy-secret-password" {
+		t.Fatalf("target=%#v, want deploy credentials", fake.target)
+	}
+	if err := validateMDMProfile(fake.profile, mdmProfileInput{
+		BaseURL:        "https://sandbox.jamfcloud.com",
+		InvitationCode: "sandbox-invite-111",
+	}, fake.payloadUUID); err != nil {
+		t.Fatalf("profile was not generated from Sandbox configuration: %v", err)
+	}
+	response := decodeMDMProfileResponse(t, rr, "ok", "name", "path", "payloadUUID")
+	if !response.OK || response.Name != "base" {
+		t.Fatalf("response=%#v", response)
+	}
+}
+

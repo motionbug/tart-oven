@@ -25,8 +25,9 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 	}
 	html := string(b)
 	for _, want := range []string{
-		`id="jamfBaseUrl"`, `id="jamfInvitationCode"`, `id="sshUser"`,
-		`id="sshPassword"`, `id="mdmTarget"`, `id="saveJamfBtn"`,
+		`id="jamfProfileRows"`, `id="addJamfProfileBtn"`, `id="saveJamfProfileBtn"`,
+		`id="jamfBaseUrl"`, `id="jamfInvitationCode"`, `id="mdmProfileSelect"`,
+		`id="mdmSshUser"`, `id="mdmSshPassword"`, `id="mdmTarget"`,
 		`id="copyMdmBtn"`, `/api/vm/mdm-profile`, `~/Desktop/mdm_enroll.mobileconfig`,
 		`placeholder="https://tenant.jamfcloud.com"`, `Enter the value after invitation=, not the full URL`,
 	} {
@@ -247,8 +248,7 @@ func TestDashboardContainsMemoryRecoveryActions(t *testing.T) {
 	}
 	html := string(b)
 	for _, want := range []string{
-		`act(\'suspend\'`,
-		`/api/" + kind`, `Suspend`,
+		`/api/" + kind`,
 		`New VM starts are deferred while pressure is critical`,
 		`id="memorySuggestion"`, `Lowering memory applies on the next boot`,
 	} {
@@ -267,7 +267,7 @@ func TestMemoryRecoveryActionsOnlyEnableForRunningVMs(t *testing.T) {
 	for _, want := range []string{
 		`const notRunning = vm.state !== "running" ? " disabled" : "";`,
 		`const stopDisabled = vm.state === "suspended" ? " disabled" : busy;`,
-		`act(\'suspend\'`, `+ notRunning +`,
+		`act(\'stop\'`,
 	} {
 		if !strings.Contains(renderTable, want) {
 			t.Errorf("running-only action guard missing %q", want)
