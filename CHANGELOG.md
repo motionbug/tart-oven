@@ -9,29 +9,40 @@ scheduling by default.
 
 ## 1.34 — 2026-08-24
 
-### Ephemeral VM Lifecycle Streamlining & Fast Hard Stop
+### Multi-Server Jamf Pro Profiles & Targeted MDM Deployment
 
-- **Removed Slow SSH Graceful Shutdown**: Removed the `Graceful shutdown` button
-  and `/api/graceful-shutdown` endpoint. In ephemeral test environments, waiting
-  30–60 seconds for internal guest OS teardown over SSH causes unnecessary delays
-  and fails if the guest kernel is unresponsive.
-- **Direct Fast Stop (`tart stop -t 5`)**: The standard **Stop** action now
-  terminates VMs directly and rapidly via `tart stop -t 5` with immediate process
-  kill fallback, releasing host RAM and slots in seconds.
-- **Simplified Web UI Actions**: Cleaned up the VM action buttons on the Dashboard
-  table to focus on core operations: **Run**, **Stop**, **Suspend**, **Screen**,
-  **Get info**, and **Edit**.
-- **Interactive Changelog Popup Modal**: Viewing the changelog in the web dashboard
-  now opens a responsive, scrollable popup modal that renders `CHANGELOG.md` dynamically
-  in-place without page reloads or 404 errors.
-- **Dashboard Startup Reliability**: Restored the global SSH username/password
-  controls expected by configuration and the SSH setup guide. Guide initialization
-  now tolerates missing optional controls instead of aborting the dashboard before
-  its live event connection starts.
-- **Signed Installer Package (`~/Downloads`)**: `./packaging/build-pkg.sh` now
-  automatically detects installed Developer ID certificates in the macOS Keychain,
-  signs both the binary (Hardened Runtime) and installer package, and outputs the
-  artifact directly to `~/Downloads/TartOven-1.34.pkg` without cluttering the repo.
+- **Multiple Named Jamf Server Profiles**: Manage and persist multiple Jamf Pro
+  environments (e.g. Production, Staging, Sandbox) in a dedicated configuration list
+  with custom server names, base URLs, and securely masked invitation codes.
+- **Dedicated Deploy MDM Profile Panel**: Select any running base VM, choose the target
+  Jamf server profile from a dropdown, and optionally override guest SSH credentials
+  to push the generated `.mobileconfig` directly to `~/Desktop/mdm_enroll.mobileconfig`.
+- **Safe Partial Configuration Updates**: Fixed a bug where updating Jamf or SSH settings
+  would reset unsubmitted configuration fields and trigger unintended scheduler ticks.
+  Configuration updates now safely decode via `map[string]json.RawMessage` and merge
+  only explicitly submitted fields while preserving existing secrets.
+
+### Darwin Bridged VM Boot IP Resolution Fix
+
+- **Robust ARP Resolution with `parseFlexMAC`**: Fixed VM boot IP resolution failures
+  on macOS where Darwin ARP output (`/usr/sbin/arp -an`) uses single-digit hex octets
+  (e.g., `74:ac:b9:46:6b:4`). Added `parseFlexMAC` normalization and multi-tier IP
+  probing (`hostARPNeighbors`, `tart ip --resolver arp`, and direct Tart fallback).
+
+### UI Streamlining & Dashboard Hardening
+
+- **Removed Suspend Action**: Streamlined the Dashboard table row actions to focus
+  on essential controls: **Run**, **Stop**, **Get info**, **Screen**, and **Edit**.
+- **DOM Null-Safety Hardening**: Added null-safety across `fillConfig`, `readConfig`,
+  and secret placeholder setters to ensure the live dashboard and scheduler controls
+  hydrate immediately without client-side script interruptions.
+- **Fast Stop (`tart stop -t 5`)**: Standard stop action terminates VMs rapidly via
+  `tart stop -t 5` with immediate process kill fallback for ephemeral VM test farms.
+- **Interactive Changelog Popup Modal**: View changelogs in-place via a responsive
+  popup modal without page navigation.
+- **Signed Installer Package (`~/Downloads`)**: `./packaging/build-pkg.sh` signs the
+  app binary and installer with Developer ID certificates and exports directly to
+  `~/Downloads/TartOven-1.34.pkg`.
 
 ## 1.33 — 2026-08-24
 
