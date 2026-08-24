@@ -50,11 +50,19 @@ Tart's storage contains two distinct kinds of items:
 * **From an OCI Base Image**: Use the **Clone** button on any cached OCI entry or enter an OCI image reference in **VM Management**.
 * **From a macOS IPSW**: In **VM Management → Create VMs**, select **Create from IPSW**, choose your macOS version ("latest" or local file path), and configure disk and memory.
 
-### 2. Configuring Guest SSH Access
-To enable automated status checks and remote commands:
+### 2. Configuring Guest Command Access
+**Usually nothing to do.** Status checks and remote commands run through the **Tart guest
+agent**, which the official `ghcr.io/cirruslabs/macos-*-base` images ship preinstalled.
+The VM row shows `agent` when that path is in use, and no SSH, key, or password is involved.
+
+For a guest **without** the agent (for example a `vanilla-*` image), Tart Oven falls back
+to SSH:
 1. Boot the VM and ensure **System Settings → General → Sharing → Remote Login (SSH)** is enabled in the guest.
-2. In Tart Oven under **Configuration → SSH & Commands**, verify the default SSH user and password (defaults for stock Cirrus images are `admin` / `admin`).
-3. When the VM boots and receives an IP, the SSH status bubble in the Dashboard turns **green** and populates the **Info** column.
+2. In Tart Oven under **Configuration → SSH & Commands**, verify the default SSH user and password (defaults for stock Cirrus images are `admin` / `admin`), and set an **SSH identity file** (must start with `~/` or `/`).
+3. Follow the **SSH setup guide** in **VM Management** to place the key in the guest, or click **Install agent** on the VM row to install the guest agent instead and stop needing SSH.
+
+Turning off **Allow SSH fallback for guest commands** in **Configuration → SSH & Commands**
+restricts Tart Oven to the agent only, and hides the SSH-only settings and guide.
 
 ### 3. Running & Scheduling VMs
 * **Manual Control**: Click **Run** on any stopped VM in the Dashboard.
@@ -62,7 +70,7 @@ To enable automated status checks and remote commands:
 
 ### 4. Interacting with Running VMs
 * **Screen Sharing**: Click **Screen** in the VM's action menu to open native macOS Screen Sharing (`vnc://admin@<vm-ip>`) directly from your browser.
-* **Ad-Hoc SSH Commands**: Use the **SSH command** bar on the Dashboard to execute commands across running VMs with optional `sudo` support.
+* **Ad-Hoc Commands**: Use the **SSH command** bar on the Dashboard to run a command on a selected running VM, with optional `sudo` support. It travels over the guest agent when available and SSH otherwise.
 
 ---
 
@@ -155,8 +163,12 @@ go build -o tart-oven .
 | POST | `/api/run` | `{"name": "vm-name"}` | Start a VM |
 | POST | `/api/stop` | `{"name": "vm-name"}` | Fast hard stop a VM (`tart stop -t 5`) |
 | POST | `/api/restart` | `{"name": "vm-name"}` | Restart a VM |
-| POST | `/api/exec` | `{"name": "vm", "command": "cmd"}` | Execute remote SSH command |
-| GET | `/api/info` | `?name=vm-name` | Query guest SSH status and system info |
+| POST | `/api/exec` | `{"name": "vm", "command": "cmd"}` | Run a command in the guest (agent first, SSH fallback) |
+| GET | `/api/info` | `?name=vm-name` | Query guest reachability and system info |
+| POST | `/api/vm/install-agent` | `{"name": "vm-name"}` | Install the Tart guest agent into a running VM |
+| POST | `/api/vm/mdm-profile` | `{"name": "vm-name"}` | Generate and copy a Jamf enrollment profile |
+| POST | `/api/vm/clear-boot-failure` | `{"name": "vm-name"}` | Clear a VM's boot-failure flag |
+| POST | `/api/refresh` | — | Force an immediate reconcile against Tart |
 | GET | `/api/performance` | — | Latest host telemetry sample & 24h history |
 | GET | `/api/history` | — | Execution history logs |
 | POST | `/api/vm/create` | Create JSON | Provision or clone a new VM |
@@ -207,5 +219,5 @@ Tart Oven provides a one-click helper to generate an Apple MDM enrollment profil
 | Message or Symptom | Explanation & Resolution |
 |---|---|
 | **VM reports "No IP after 60s"** | The VM started but has not emitted DHCP traffic on the bridge interface. Verify that the configured bridge interface is active, or increase **Boot timeout** under Configuration. |
-| **SSH bubble is Red / Get Info fails** | SSH connection could not be established. Ensure Remote Login is enabled in guest macOS Sharing settings and verify credentials in Configuration. |
+| **Status bubble is Red / Get Info fails** | The guest agent did not answer and the SSH fallback also failed. Click **Install agent** on the VM row, or enable Remote Login in the guest and set a valid **SSH identity file** in Configuration. |
 | **"Deferred: host is under critical memory pressure"** | Host RAM is exhausted. Tart Oven paused new starts to prevent a kernel crash. Stop idle VMs or reduce guest RAM allocations in VM Management. |

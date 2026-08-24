@@ -24,7 +24,7 @@ profile.cov
 go.work
 go.work.sum
 
-# Claude work files
+# Local agent/editor working files
 settings.local.json
 .claude/
 

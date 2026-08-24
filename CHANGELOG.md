@@ -32,6 +32,19 @@ the installer shipped in 1.38.
   inherit the agent's environment, so without it anything resolved by name could fail.
   Verified byte-for-byte against the plists the Cirrus base images ship.
 
+### Documentation
+
+- The in-app **Helper Guide** and README now describe the guest agent as the primary
+  path for guest commands, with SSH as the fallback, instead of walking every user
+  through SSH key setup they usually do not need.
+- Documented the **Install agent** action, the **Allow SSH fallback** setting, and the
+  requirement that the SSH identity file be an absolute or `~/`-rooted path.
+- The API reference lists the endpoints added since it was last revised, including
+  `/api/vm/install-agent`, `/api/vm/mdm-profile`, `/api/vm/clear-boot-failure`, and
+  `/api/refresh`, and no longer describes `/api/exec` as SSH-only.
+- Corrected the red status-bubble troubleshooting entry, which advised checking SSH
+  credentials for a condition the guest agent now usually handles.
+
 ## 1.38 — 2026-08-24
 
 ### SSH Is Now Optional
