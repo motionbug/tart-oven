@@ -1,11 +1,67 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.34 streamlines
+This file records user-visible changes to Tart Oven. Version 1.35 hardens the
+local API against cross-site requests, fixes several VM-lifecycle and Jamf/MDM
+correctness bugs, and makes the dashboard more resilient. Version 1.34 streamlines
 VM teardown by eliminating slow SSH graceful shutdown in favor of fast, direct
 hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.35 — 2026-08-24
+
+### Security Hardening
+
+- **Cross-Origin Request Protection**: All state-changing endpoints now reject
+  requests carrying a cross-origin `Origin` header. This blocks a malicious web
+  page open in the operator's browser from silently driving the local API
+  (running commands on guests, deleting VMs, or rewriting config) via forged
+  cross-site POSTs. Same-origin dashboard requests and non-browser clients are
+  unaffected.
+- **Safe Tart Install/Update Path**: The install/update flow now only replaces a
+  derived directory when it is an actual `tart.app` bundle, so a crafted
+  `tartAppPath` can no longer make the updater delete an arbitrary directory.
+
+### VM Lifecycle & SSH Fixes
+
+- **Rename Preserves Per-VM State**: Renaming a VM now carries over its
+  server-side notes, tags, and (write-only) SSH credentials to the new name
+  instead of silently dropping them, so later SSH and MDM operations keep working.
+- **Long SSH Commands No Longer Cut Off**: The **Send command** and **Get info**
+  panels no longer inherit the SSH *connect* timeout as an overall deadline, so a
+  legitimately long guest command (e.g. `softwareupdate`) runs to completion. A
+  dead connection is still dropped quickly by SSH keepalives.
+- **Robust On-Demand IP Resolution**: **Get info**, **Send command**, and **Deploy
+  MDM Profile** now use the same multi-tier IP resolver as VM boot (host ARP-table
+  match plus Tart resolvers), so they succeed after a restart or for VMs started
+  outside Tart Oven, not just at boot.
+
+### Jamf / MDM Correctness
+
+- **Unknown Profile Selection Errors Safely**: Deploying with a Jamf profile that
+  no longer exists (e.g. a stale dropdown after the profile was deleted in another
+  tab) now returns a clear error instead of silently enrolling the VM into the
+  legacy default server.
+- **Legacy Invitation Code Preserved**: Saving the Jamf profiles list no longer
+  drops a legacy single-server invitation code when the migrated "default" profile
+  is saved without re-entering it.
+
+### Dashboard Reliability
+
+- **Crash-Resistant Control Bindings**: Dashboard event bindings are now guarded,
+  so a removed or renamed UI element can no longer throw during startup and blank
+  the entire dashboard (loss of live updates, tabs, and buttons).
+- **Filters No Longer Commit Unsaved Settings**: Toggling **Show running only** or
+  **Pause** now sends only the field it changes, instead of committing every
+  half-edited Settings field, and the Pause control no longer risks unpausing the
+  scheduler before the first live update arrives.
+- **Removed Dead Shutdown Settings**: The **Shutdown command (SSH)** and **Shutdown
+  wait timeout** settings, which no longer had any effect after 1.34's fast-stop
+  change, were removed so the UI no longer advertises behavior that does not run.
+- **SSE Snapshot Data Race Fixed**: The dashboard state snapshot now copies task
+  and log data before serializing it, eliminating a data race with in-flight
+  create/clone task output.
 
 ## 1.34 — 2026-08-24
 

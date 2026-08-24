@@ -70,7 +70,7 @@ func TestEveryLiteralDOMIDReferenceHasAnElement(t *testing.T) {
 	for _, match := range regexp.MustCompile(`\bid="([^"]+)"`).FindAllStringSubmatch(html, -1) {
 		ids[match[1]] = true
 	}
-	for _, match := range regexp.MustCompile(`getElementById\("([^"]+)"\)`).FindAllStringSubmatch(html, -1) {
+	for _, match := range regexp.MustCompile(`(?:getElementById|\bel)\("([^"]+)"\)`).FindAllStringSubmatch(html, -1) {
 		if !ids[match[1]] {
 			t.Errorf("JavaScript references missing DOM id %q", match[1])
 		}
@@ -320,7 +320,7 @@ func TestVMLookupClearsPreviousMemorySuggestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadVMInfo := sourceSection(t, string(b), `async function loadVMInfo`, `document.getElementById("editBtn")`)
+	loadVMInfo := sourceSection(t, string(b), `async function loadVMInfo`, `el("editBtn")`)
 	loading := strings.Index(loadVMInfo, `memorySuggestion.textContent = "";`)
 	fetching := strings.Index(loadVMInfo, `await api("/api/vm/get?name="`)
 	if loading < 0 || fetching < 0 || loading > fetching {

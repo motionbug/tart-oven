@@ -588,8 +588,6 @@
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
-        <div class="field"><label>Shutdown command (SSH)</label><input type="text" id="shutdownCommand"><small>Clean guest shutdown; falls back to tart stop</small></div>
-        <div class="field"><label>Shutdown wait timeout (s)</label><input type="number" id="shutdownWaitSec" min="1"><small>Wait for SSH shutdown before tart stop</small></div>
       </div>
     </div>
 
@@ -712,6 +710,16 @@ async function api(path, opts) {
   opts = opts || {};
   return fetch(path, opts);
 }
+
+// Guarded element accessors for top-level event bindings. Binding a handler to
+// an element id that was removed or renamed during a UI change must not throw
+// at script-evaluation time — that would abort the entire script and blank the
+// dashboard (no SSE, no tabs, no buttons). A missing element yields a sink that
+// absorbs `.onclick = fn`, `.onchange = fn`, and `.addEventListener(...)` as
+// no-ops, so one stale binding can never take the whole page down.
+const _elSink = new Proxy({}, { get: () => () => {}, set: () => true });
+function el(id) { return document.getElementById(id) || _elSink; }
+function q(sel) { return document.querySelector(sel) || _elSink; }
 
 // ---- SSE ----
 function connect() {
@@ -1028,8 +1036,6 @@ function fillConfig(c) {
   set("sshKey", c.sshKey || "");
   set("sshTimeoutSec", c.sshTimeoutSec);
   set("statusCommand", c.statusCommand);
-  set("shutdownCommand", c.shutdownCommand);
-  set("shutdownWaitSec", c.shutdownWaitSec);
   set("listen", c.listen);
   set("runArgs", c.runArgs || "");
   set("bootTimeoutSec", c.bootTimeoutSec || 60);
@@ -1063,7 +1069,6 @@ function readConfig() {
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
-    shutdownCommand: str("shutdownCommand"), shutdownWaitSec: num("shutdownWaitSec"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
   };
 }
@@ -1265,12 +1270,21 @@ async function deleteJamfProfile(id) {
   }
 }
 
-document.getElementById("saveBtn").onclick = () => saveConfig();
-document.getElementById("addJamfProfileBtn").onclick = openAddJamfProfile;
-document.getElementById("cancelJamfProfileBtn").onclick = closeJamfProfileEditor;
-document.getElementById("saveJamfProfileBtn").onclick = saveJamfProfile;
-document.getElementById("pauseBtn").onclick = () => saveConfig({ paused: !(latest && latest.config.paused) });
-document.getElementById("refreshBtn").onclick = async (e) => {
+el("saveBtn").onclick = () => saveConfig();
+el("addJamfProfileBtn").onclick = openAddJamfProfile;
+el("cancelJamfProfileBtn").onclick = closeJamfProfileEditor;
+el("saveJamfProfileBtn").onclick = saveJamfProfile;
+el("pauseBtn").onclick = async () => {
+  if (!latest) return; // don't post a fabricated paused value before the first snapshot
+  try {
+    // Send only the paused flag, not the whole config form.
+    await api("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: !latest.config.paused })
+    });
+  } catch (err) { toast("Pause failed", err.message, "bad"); }
+};
+el("refreshBtn").onclick = async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true; const o = btn.textContent; btn.textContent = "Refreshing…";
   try {
@@ -1579,9 +1593,9 @@ function fillSshTargets(vms) {
     : '<option value="">— no running VM —</option>';
   if (prev && running.some(v => v.name === prev)) sel.value = prev;
 }
-document.getElementById("sshRun").onclick = sendCmd;
-document.getElementById("sshCommand").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
-document.getElementById("sshSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
+el("sshRun").onclick = sendCmd;
+el("sshCommand").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
+el("sshSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 
 // ---- VM edit modal (notes + tags) ----
 let editVmName = "";
@@ -1612,13 +1626,13 @@ async function saveVmDetails() {
     toast("Save error", e.message, "bad");
   }
 }
-document.getElementById("notesSave").onclick = saveVmDetails;
-document.getElementById("notesCancel").onclick = closeEditModal;
-document.querySelector("#notesModal .modal-backdrop").onclick = closeEditModal;
-document.getElementById("notesText").addEventListener("keydown", e => {
+el("notesSave").onclick = saveVmDetails;
+el("notesCancel").onclick = closeEditModal;
+q("#notesModal .modal-backdrop").onclick = closeEditModal;
+el("notesText").addEventListener("keydown", e => {
   if (e.key === "Escape") closeEditModal();
 });
-document.getElementById("tagsInput").addEventListener("keydown", e => {
+el("tagsInput").addEventListener("keydown", e => {
   if (e.key === "Escape") closeEditModal();
 });
 
@@ -1728,8 +1742,8 @@ function renderHistory() {
       '<td>' + trig + '</td></tr>';
   }).join("");
 }
-document.getElementById("histSearch").addEventListener("input", renderHistory);
-document.getElementById("histRefresh").onclick = loadHistory;
+el("histSearch").addEventListener("input", renderHistory);
+el("histRefresh").onclick = loadHistory;
 
 // ---- VM management ----
 function fillOne(id, vms, opts) {
@@ -1799,7 +1813,7 @@ async function copyMdmProfile() {
     updateMdmCopyButton();
   }
 }
-document.getElementById("copyMdmBtn").onclick = copyMdmProfile;
+el("copyMdmBtn").onclick = copyMdmProfile;
 
 function updateCreateMode() {
   const mode = document.querySelector('input[name="createMode"]:checked').value;
@@ -1810,7 +1824,7 @@ function updateCreateMode() {
   document.getElementById("linuxField").style.display = clone ? "none" : "";
 }
 
-document.getElementById("createBtn").onclick = async () => {
+el("createBtn").onclick = async () => {
   const mode = document.querySelector('input[name="createMode"]:checked').value;
   const num = id => parseInt(document.getElementById(id).value, 10) || 0;
   const str = id => document.getElementById(id).value.trim();
@@ -1866,7 +1880,7 @@ async function loadVMInfo() {
   } catch (e) { info.textContent = "error: " + e.message; memorySuggestion.textContent = ""; }
 }
 
-document.getElementById("editBtn").onclick = async () => {
+el("editBtn").onclick = async () => {
   const num = id => parseInt(document.getElementById(id).value, 10) || 0;
   const name = document.getElementById("editSelect").value;
   const newName = document.getElementById("renameNew").value.trim();
@@ -1915,7 +1929,7 @@ document.getElementById("editBtn").onclick = async () => {
   loadVMInfo();
 };
 
-document.getElementById("deleteBtn").onclick = async () => {
+el("deleteBtn").onclick = async () => {
   const name = document.getElementById("deleteSelect").value;
   if (!name) return;
   if (!confirm("Permanently delete VM \"" + name + "\"? This cannot be undone.")) return;
@@ -1961,7 +1975,7 @@ async function cancelTask(id) {
   } catch (e) { toast("Cancel failed", e.message, "bad"); }
 }
 
-document.getElementById("installTartBtn").onclick = async (e) => {
+el("installTartBtn").onclick = async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true; btn.textContent = "Installing…";
   try {
@@ -1973,7 +1987,7 @@ document.getElementById("installTartBtn").onclick = async (e) => {
   setTimeout(() => { btn.disabled = false; btn.textContent = "Install Tart"; }, 4000);
 };
 
-document.getElementById("updateTartBtn").onclick = async (e) => {
+el("updateTartBtn").onclick = async (e) => {
   if (!confirm("Download and install the latest Tart version?")) return;
   const btn = e.currentTarget;
   btn.disabled = true; btn.textContent = "Updating…";
@@ -2030,14 +2044,14 @@ function bindSshGuideInputs() {
 bindSshGuideInputs();
 
 // ---- server control ----
-document.getElementById("srvScreen").onclick = () => {
+el("srvScreen").onclick = () => {
   if (latest && latest.hostIP) {
     openVNC(latest.hostIP);
   } else {
     toast("Screen share", "Host IP not available", "bad");
   }
 };
-document.getElementById("srvRestart").onclick = async () => {
+el("srvRestart").onclick = async () => {
   if (!confirm("Restart the Tart Oven server? The dashboard will reconnect automatically.")) return;
   try {
     await api("/api/server/restart", { method: "POST" });
@@ -2045,7 +2059,7 @@ document.getElementById("srvRestart").onclick = async () => {
     document.getElementById("hmeta").textContent = "restarting…";
   } catch (e) { toast("Restart failed", e.message, "bad"); }
 };
-document.getElementById("srvStop").onclick = async () => {
+el("srvStop").onclick = async () => {
   if (!confirm("Stop the Tart Oven server? It will no longer be reachable until you start it again on the Mac.")) return;
   try {
     await api("/api/server/stop", { method: "POST" });
@@ -2054,8 +2068,8 @@ document.getElementById("srvStop").onclick = async () => {
   } catch (e) { toast("Stop failed", e.message, "bad"); }
 };
 // Light mode toggle
-document.getElementById("lightMode").checked = getTheme() === "light";
-document.getElementById("lightMode").onchange = (e) => setTheme(e.target.checked);
+el("lightMode").checked = getTheme() === "light";
+el("lightMode").onchange = (e) => setTheme(e.target.checked);
 
 // Launch at login toggle
 (async function initLaunchAgent() {
@@ -2175,17 +2189,19 @@ updateCreateMode();
 updateSshGuide();
 
 // Re-render VM table when filter toggle or search changes
-document.getElementById("showRunningOnly").onchange = async (e) => {
+el("showRunningOnly").onchange = async (e) => {
   if (latest) renderTable(latest.vms);
   try {
+    // Send only the field this toggle owns; posting the whole config form here
+    // would commit any half-edited Settings fields the user hasn't saved.
     await api("/api/config", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...readConfig(), showRunningOnly: e.target.checked })
+      body: JSON.stringify({ showRunningOnly: e.target.checked })
     });
   } catch (_) {}
 };
-document.getElementById("vmSearch").addEventListener("input", () => { if (latest) renderTable(latest.vms); });
-document.getElementById("perfRefreshBtn").onclick = loadPerformance;
+el("vmSearch").addEventListener("input", () => { if (latest) renderTable(latest.vms); });
+el("perfRefreshBtn").onclick = loadPerformance;
 window.addEventListener("resize", () => {
   clearTimeout(performanceResizeTimer);
   performanceResizeTimer = setTimeout(() => {
@@ -2209,8 +2225,8 @@ function closeChangelogModal() {
   document.getElementById("changelogModal").classList.add("hidden");
 }
 
-document.getElementById("changelogClose").onclick = closeChangelogModal;
-document.querySelector("#changelogModal .modal-backdrop").onclick = closeChangelogModal;
+el("changelogClose").onclick = closeChangelogModal;
+q("#changelogModal .modal-backdrop").onclick = closeChangelogModal;
 
 document.addEventListener("click", (e) => {
   const a = e.target.closest("a");

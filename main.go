@@ -41,7 +41,7 @@ import (
 //go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.34"
+const version = "1.35"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -87,7 +87,14 @@ func tartInstalledAt(binPath string) bool {
 func appBundleFromBin(binPath string) string {
 	const suffix = "/Contents/MacOS/tart"
 	if strings.HasSuffix(binPath, suffix) {
-		return strings.TrimSuffix(binPath, suffix)
+		dest := strings.TrimSuffix(binPath, suffix)
+		// Only replace the derived directory if it actually looks like a
+		// tart.app bundle. Otherwise a user-supplied tartAppPath such as
+		// "/some/dir/Contents/MacOS/tart" would make install/update `rm -rf`
+		// an arbitrary directory; fall back to the safe default instead.
+		if strings.HasSuffix(dest, ".app") {
+			return dest
+		}
 	}
 	return "/Applications/tart.app"
 }
@@ -246,10 +253,8 @@ type Config struct {
 	SSHPassword             string        `json:"sshPassword"`     // guest SSH/sudo password; write-only
 	SSHKey                  string        `json:"sshKey"`          // optional identity file path
 	SSHTimeoutSec           int           `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand           string        `json:"statusCommand"`   // command for "Get info"
-	ShutdownCommand         string        `json:"shutdownCommand"` // SSH command for a clean guest shutdown
-	ShutdownWaitSec         int           `json:"shutdownWaitSec"` // wait this long for SSH shutdown before `tart stop`
-	RunArgs                 string        `json:"runArgs"`         // extra args appended to every `tart run`
+	StatusCommand           string        `json:"statusCommand"` // command for "Get info"
+	RunArgs                 string        `json:"runArgs"`       // extra args appended to every `tart run`
 	NetPriority             string        `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
 	BootTimeoutSec          int           `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
 	HistoryDays             int           `json:"historyDays"`     // run-history retention in days
@@ -330,8 +335,6 @@ func defaultConfig() Config {
 		SSHKey:                  "~/.ssh/tart-oven",
 		SSHTimeoutSec:           15,
 		StatusCommand:           `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
-		ShutdownCommand:         "sudo shutdown -h now",
-		ShutdownWaitSec:         60,
 		RunArgs:                 "",
 		NetPriority:             "wifi",
 		BootTimeoutSec:          60,
@@ -598,12 +601,6 @@ func (m *Manager) load() {
 	}
 	if m.cfg.StatusCommand == "" {
 		m.cfg.StatusCommand = d.StatusCommand
-	}
-	if m.cfg.ShutdownCommand == "" {
-		m.cfg.ShutdownCommand = d.ShutdownCommand
-	}
-	if m.cfg.ShutdownWaitSec < 1 {
-		m.cfg.ShutdownWaitSec = d.ShutdownWaitSec
 	}
 	if m.cfg.Excluded == nil {
 		m.cfg.Excluded = []string{}
@@ -1405,24 +1402,7 @@ func (m *Manager) doRun(name, trigger string) {
 	// or the configured boot deadline expires.
 	ipCtx, cancelIP := context.WithTimeout(context.Background(), time.Duration(bootTimeout)*time.Second)
 	ip, ipErr := pollVMIP(ipCtx, 1500*time.Millisecond, func(ctx context.Context) (string, error) {
-		ip, err := resolveVMIP(home, name, hostARPNeighbors)
-		if err == nil && strings.TrimSpace(ip) != "" {
-			return strings.TrimSpace(ip), nil
-		}
-		// Fallback 1: Tart CLI with ARP resolver
-		out, terr := m.tartCmdCtx(ctx, home, "ip", name, "--wait", "1", "--resolver", "arp").Output()
-		if terr == nil && strings.TrimSpace(string(out)) != "" {
-			return strings.TrimSpace(string(out)), nil
-		}
-		// Fallback 2: Tart CLI default resolver
-		out, terr = m.tartCmdCtx(ctx, home, "ip", name, "--wait", "1").Output()
-		if terr == nil && strings.TrimSpace(string(out)) != "" {
-			return strings.TrimSpace(string(out)), nil
-		}
-		if err != nil {
-			return "", err
-		}
-		return "", errors.New("no IP resolved yet")
+		return m.resolveVMIPRobust(ctx, home, name, 1)
 	})
 	cancelIP()
 
@@ -1815,18 +1795,15 @@ func sshOutcome(res execResult) (bool, string) {
 
 // sshExec runs command on the guest over SSH. If sudoPassword is non-empty it
 // is fed to `sudo -S` on the VM so commands that need sudo work without a TTY;
-// the password itself is never logged, but callers differ in where it comes
-// from: the ad-hoc Send Command panel passes a per-request value that is
-// never persisted, while doStop passes the persisted per-VM/default
-// Config.SSHPassword so a clean shutdown never needs an interactive prompt.
+// the password itself is never logged. The Send Command panel passes a
+// per-request value that is never persisted.
 func (m *Manager) sshExec(name, command, sudoPassword string) execResult {
-	timeout := 120 * time.Second
-	m.mu.Lock()
-	if m.cfg.SSHTimeoutSec > 0 {
-		timeout = time.Duration(m.cfg.SSHTimeoutSec+15) * time.Second
-	}
-	m.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// SSHTimeoutSec is the SSH *connect* timeout (applied as ConnectTimeout in
+	// sshExecContext); it must not double as a whole-command deadline, or a
+	// small connect timeout would kill a legitimately long command such as
+	// `softwareupdate`. A dead connection is still caught within ~15s by the
+	// ServerAlive keepalives, so this outer command deadline can be generous.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	return m.sshExecContext(ctx, name, command, sudoPassword)
 }
@@ -1848,14 +1825,15 @@ func (m *Manager) sshExecContext(ctx context.Context, name, command, sudoPasswor
 	m.mu.Unlock()
 
 	if ip == "" {
-		// Resolve on demand if we don't have a cached IP.
+		// Resolve on demand if we don't have a cached IP, using the same
+		// multi-tier resolver the boot path uses.
 		resolveCtx, cancelResolve := context.WithTimeout(ctx, 20*time.Second)
-		out, err := m.tartOutputContext(resolveCtx, home, "ip", name, "--wait", "10", "--resolver", "arp")
+		resolved, err := m.resolveVMIPRobust(resolveCtx, home, name, 10)
 		cancelResolve()
 		if err != nil {
 			return execResult{Error: "could not resolve IP: " + err.Error()}
 		}
-		ip = strings.TrimSpace(out)
+		ip = strings.TrimSpace(resolved)
 	}
 	if ip == "" {
 		return execResult{Error: "no IP for VM"}
@@ -2321,6 +2299,16 @@ func (m *Manager) snapshot() stateSnapshot {
 	}
 	sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
 
+	// Deep-copy tasks and logs: snapshotJSON marshals the returned snapshot
+	// after m.mu is released, while appendTaskOutput/finishTask mutate live
+	// task fields under the lock. Sharing the pointers would be a data race.
+	tasks := make([]*Task, len(m.tasks))
+	for i, t := range m.tasks {
+		tc := *t
+		tasks[i] = &tc
+	}
+	logs := append([]string(nil), m.logs...)
+
 	return stateSnapshot{
 		VMs:            vms,
 		Config:         newConfigView(m.cfg),
@@ -2332,10 +2320,10 @@ func (m *Manager) snapshot() stateSnapshot {
 		TartJSON:       m.tartJSON,
 		TartInstalled:  tartInstalledAt(m.cfg.TartAppPath),
 		TartVersion:    m.tartVersion,
-		Tasks:          m.tasks,
+		Tasks:          tasks,
 		HostStats:      m.hostStats,
 		HostIP:         m.hostIP,
-		Logs:           m.logs,
+		Logs:           logs,
 	}
 }
 
@@ -2454,22 +2442,31 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	m.mu.Unlock()
 
 	// Select target Jamf profile:
-	// 1. By profileId if provided
+	// 1. By profileId if provided (a non-empty id that matches nothing is an
+	//    error, not a silent fall-through to a different server)
 	// 2. First configured profile in cfg.JamfProfiles if available
 	// 3. Fallback to legacy cfg.JamfBaseURL and cfg.JamfInvitationCode
 	var targetProfile JamfProfile
+	profileFound := false
 	if in.ProfileID != "" {
 		for _, p := range cfg.JamfProfiles {
 			if p.ID == in.ProfileID {
 				targetProfile = p
+				profileFound = true
 				break
 			}
 		}
+		if !profileFound {
+			writeMDMProfileError(w, http.StatusBadRequest, name, mdmStageConfiguration,
+				"selected Jamf server profile no longer exists")
+			return
+		}
 	}
-	if targetProfile.BaseURL == "" && len(cfg.JamfProfiles) > 0 && in.ProfileID == "" {
+	if !profileFound && len(cfg.JamfProfiles) > 0 {
 		targetProfile = cfg.JamfProfiles[0]
+		profileFound = true
 	}
-	if targetProfile.BaseURL == "" {
+	if !profileFound {
 		targetProfile = JamfProfile{
 			Name:           "Default Server",
 			BaseURL:        cfg.JamfBaseURL,
@@ -2560,19 +2557,34 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Manager) resolveMDMIPWithTart(ctx context.Context, name, home string) (string, error) {
-	out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", "10", "--resolver", "arp").Output()
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", ctxErr
+// resolveVMIPRobust runs the same multi-tier IP resolution the boot path uses,
+// so on-demand resolution (Get info, Send command, MDM deploy) succeeds on the
+// hosts the boot fix was written for: match Tart's configured MAC against the
+// host ARP table first, then fall back to Tart's own ARP resolver and its
+// default resolver. waitSec bounds each Tart fallback's --wait.
+func (m *Manager) resolveVMIPRobust(ctx context.Context, home, name string, waitSec int) (string, error) {
+	if ip, err := resolveVMIP(home, name, hostARPNeighbors); err == nil && strings.TrimSpace(ip) != "" {
+		return strings.TrimSpace(ip), nil
+	}
+	wait := strconv.Itoa(waitSec)
+	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait, "--resolver", "arp").Output(); err == nil {
+		if ip := strings.TrimSpace(string(out)); ip != "" {
+			return ip, nil
 		}
-		return "", errors.New("resolve VM IP with Tart")
 	}
-	ip := strings.TrimSpace(string(out))
-	if ip == "" {
-		return "", errors.New("Tart returned an empty VM IP")
+	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait).Output(); err == nil {
+		if ip := strings.TrimSpace(string(out)); ip != "" {
+			return ip, nil
+		}
 	}
-	return ip, nil
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
+	return "", errors.New("could not resolve VM IP")
+}
+
+func (m *Manager) resolveMDMIPWithTart(ctx context.Context, name, home string) (string, error) {
+	return m.resolveVMIPRobust(ctx, home, name, 10)
 }
 
 func (m *Manager) routes() *http.ServeMux {
@@ -2829,6 +2841,21 @@ func (m *Manager) routes() *http.ServeMux {
 			return
 		}
 		out, err := m.tartCmd(m.storage(), "rename", b.Name, b.NewName).CombinedOutput()
+		if err == nil {
+			// Carry the VM's server-side state (notes, tags, SSH credentials —
+			// the SSH password is write-only and can't be re-sent by the client)
+			// to the new name before reconcile rebuilds the map from `tart list`,
+			// which would otherwise drop the old entry and lose those fields.
+			m.mu.Lock()
+			if old := m.vms[b.Name]; old != nil {
+				moved := *old
+				moved.Name = b.NewName
+				m.vms[b.NewName] = &moved
+				delete(m.vms, b.Name)
+			}
+			m.save()
+			m.mu.Unlock()
+		}
 		m.reconcile()
 		m.broadcast()
 		res := map[string]string{"output": string(out)}
@@ -3137,6 +3164,15 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 			for _, p := range m.cfg.JamfProfiles {
 				existingMap[p.ID] = p.InvitationCode
 			}
+			// The dashboard represents a legacy single-server config as a
+			// synthesized profile with id "default". When that row is saved
+			// without re-entering its (write-only) invitation code, inherit the
+			// stored legacy code so the profile isn't persisted code-less.
+			if m.cfg.JamfInvitationCode != "" {
+				if _, ok := existingMap["default"]; !ok {
+					existingMap["default"] = m.cfg.JamfInvitationCode
+				}
+			}
 			var cleaned []JamfProfile
 			for i, p := range list {
 				p.Name = strings.TrimSpace(p.Name)
@@ -3205,18 +3241,6 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var v string
 		if json.Unmarshal(raw, &v) == nil {
 			m.cfg.StatusCommand = v
-		}
-	}
-	if raw, ok := fields["shutdownCommand"]; ok {
-		var v string
-		if json.Unmarshal(raw, &v) == nil {
-			m.cfg.ShutdownCommand = v
-		}
-	}
-	if raw, ok := fields["shutdownWaitSec"]; ok {
-		var v int
-		if json.Unmarshal(raw, &v) == nil && v >= 1 {
-			m.cfg.ShutdownWaitSec = v
 		}
 	}
 	if raw, ok := fields["runArgs"]; ok {
@@ -3432,7 +3456,29 @@ func main() {
 	log.Printf("TART_HOME: %s (mounted=%v)", m.cfg.VMStoragePath, m.storageMounted)
 	log.Printf("listening on http://%s", m.cfg.Listen)
 
-	if err := http.ListenAndServe(m.cfg.Listen, m.routes()); err != nil {
+	if err := http.ListenAndServe(m.cfg.Listen, sameOriginGuard(m.routes())); err != nil {
 		log.Fatalf("http server: %v", err)
 	}
+}
+
+// sameOriginGuard rejects state-changing requests that carry a cross-origin
+// Origin header. Browsers attach Origin to every non-GET cross-origin request
+// (simple requests included), so this blocks a malicious page the operator has
+// open from driving the local API via forged POSTs (CSRF). Requests with no
+// Origin header (curl, same-origin navigations) are left untouched.
+func sameOriginGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			// Safe methods: no state change to protect.
+		default:
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if u, err := url.Parse(origin); err != nil || u.Host != r.Host {
+					http.Error(w, "cross-origin request forbidden", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
