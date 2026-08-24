@@ -426,10 +426,15 @@ type VM struct {
 	SSHCheckedAt time.Time `json:"sshCheckedAt,omitempty"` // when SSH was last checked
 	Info         string    `json:"info,omitempty"`         // last "Get info" (status command) output
 	InfoAt       time.Time `json:"infoAt,omitempty"`       // when Info was last fetched
-	Notes        string    `json:"notes,omitempty"`        // user-entered notes for tracking/inventory
-	Tags         []string  `json:"tags,omitempty"`         // user-defined tags for grouping/filtering
-	SSHUser      string    `json:"sshUser,omitempty"`      // custom SSH user (overrides default)
-	SSHPassword  string    `json:"sshPassword,omitempty"`  // custom SSH/sudo password; persisted, but masked before every client-facing response
+
+	MDMEnrolled  bool      `json:"mdmEnrolled,omitempty"`  // guest reports an active MDM enrollment
+	MDMServer    string    `json:"mdmServer,omitempty"`    // raw MDM check-in URL from the guest
+	MDMCheckedAt time.Time `json:"mdmCheckedAt,omitempty"` // zero means never probed, which renders as unknown
+
+	Notes       string   `json:"notes,omitempty"`       // user-entered notes for tracking/inventory
+	Tags        []string `json:"tags,omitempty"`        // user-defined tags for grouping/filtering
+	SSHUser     string   `json:"sshUser,omitempty"`     // custom SSH user (overrides default)
+	SSHPassword string   `json:"sshPassword,omitempty"` // custom SSH/sudo password; persisted, but masked before every client-facing response
 
 	LastError string `json:"lastError,omitempty"`
 
@@ -1478,6 +1483,9 @@ func (m *Manager) doRun(name, trigger string) {
 	m.mu.Unlock()
 	m.broadcast()
 	m.logln("info %s: ok=%v", name, ok)
+
+	m.refreshMDMStatus(name)
+	m.broadcast()
 }
 
 func (m *Manager) doStop(name string) {
@@ -2676,6 +2684,7 @@ func (m *Manager) routes() *http.ServeMux {
 			vm.InfoAt = time.Now()
 		}
 		m.mu.Unlock()
+		m.refreshMDMStatus(name)
 		m.broadcast()
 		writeJSON(w, res)
 	})
