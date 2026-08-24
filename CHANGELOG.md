@@ -1,6 +1,7 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.39 fixes the guest
+This file records user-visible changes to Tart Oven. Version 1.40 replaces the Jamf
+username line with a real MDM enrollment column. Version 1.39 fixes the guest
 agent installer against a real agentless VM. Version 1.38 makes the SSH
 fallback optional and adds a guest agent installer. Version 1.37 runs guest commands
 through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
@@ -14,6 +15,40 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.40 — 2026-08-24
+
+### MDM Enrollment Column
+
+- **See enrollment at a glance**: A new **MDM** column reports whether each guest is
+  enrolled — green with the **Jamf Pro URL** beneath it when it is, red when the guest
+  reports no enrollment, and grey when it has not been probed yet.
+- **Grey is not red**: A VM that has never been probed, or whose probe failed, shows
+  grey rather than red. Reporting an unchecked VM as unenrolled was the exact flaw in
+  the line this column replaces.
+- **The console URL, not the check-in endpoint**: macOS reports the MDM server as
+  `https://your-server/mdm/ServerURL`. The column shows `https://your-server` — the
+  address you would actually open — with the raw value on hover.
+- **Reliable source**: Enrollment comes from a built-in `profiles status -type
+  enrollment` probe with a fixed output shape, not from the editable Status command,
+  so editing that field cannot break the column. It runs wherever **Get info** already
+  runs, and travels over the guest agent when available.
+
+### `(no Jamf user)` Removed
+
+The default Status command no longer looks up `jamfProUsername`. That lookup printed
+`(no Jamf user)` whenever the read failed for **any** reason, including on VMs that
+were enrolled and managed but simply had no username-variable profile scoped to them —
+so it reported healthy, managed VMs as though they were unmanaged, and answered a
+question the MDM column now answers properly.
+
+Existing installs are migrated automatically: a Status command matching the old default
+byte-for-byte is replaced. A command you have customised is left untouched.
+
+### Notes
+
+The **Notes** column was reassigned to make room for MDM. Notes themselves are
+unchanged and still editable per VM; they simply no longer occupy a table column.
 
 ## 1.39 — 2026-08-24
 

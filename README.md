@@ -6,7 +6,7 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's native `Virtualization.framework`.
 
-Current release: **1.39**. [View Changelog](CHANGELOG.md) for full release notes and update details.
+Current release: **1.40**. [View Changelog](CHANGELOG.md) for full release notes and update details.
 
 ---
 
@@ -76,7 +76,7 @@ restricts Tart Oven to the agent only, and hides the SSH-only settings and guide
 
 ## 4. WebUI Tabs Overview
 
-- **Dashboard** — Scheduler master switch, **Refresh VM status** button, separated Local VMs and OCI Images tables with search and filter controls, and per-VM action buttons.
+- **Dashboard** — Scheduler master switch, **Refresh VM status** button, separated Local VMs and OCI Images tables with search and filter controls, and per-VM action buttons. The **MDM** column reports each guest's enrollment: green with the Jamf Pro URL when enrolled, red when the guest reports no enrollment, and grey when it has not been probed yet (a VM that has never run, or whose probe failed).
 - **Performance** — Live host health cards (CPU, RAM, Kernel Pressure, Disks, Uptime) and interactive 24-hour historical telemetry charts.
 - **VM Management** — VM creation (IPSW install or OCI/template cloning), hardware editing (`tart set`), renaming, and deletion. Background task output is streamed live to the **Activity** panel.
 - **Configuration** — Centralized settings for the VM Scheduler, Tart runtime & storage paths, SSH timeouts, network listen address, and auto-start LaunchAgent. The light/dark toggle lives in the page header.
@@ -133,11 +133,11 @@ To access the web dashboard from another Mac or PC on your local network:
 
 ## 7. Installation, Upgrades & Deployment
 
-### Install or Upgrade to 1.39
-Double-click `TartOven-1.39.pkg` or run from Terminal:
+### Install or Upgrade to 1.40
+Double-click `TartOven-1.40.pkg` or run from Terminal:
 
 ```sh
-sudo installer -pkg ~/Downloads/TartOven-1.39.pkg -target /
+sudo installer -pkg ~/Downloads/TartOven-1.40.pkg -target /
 ```
 
 This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing configuration in `~/.tart-oven/state.json`.
@@ -149,7 +149,7 @@ This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, r
 go build -o tart-oven .
 
 # 2. Build & sign macOS installer package (.pkg)
-# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.39.pkg
+# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.40.pkg
 ./packaging/build-pkg.sh
 ```
 
