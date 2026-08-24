@@ -1008,7 +1008,8 @@ async function loadPerformance() {
 // ---- config form ----
 let configLoaded = false;
 function fillConfig(c) {
-  const set = (id, v) => { document.getElementById(id).value = v; };
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? "" : v); };
+  const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
   set("intervalMinutes", c.intervalMinutes);
   set("windowMinutes", c.windowMinutes);
   set("maxConcurrent", c.maxConcurrent);
@@ -1016,12 +1017,11 @@ function fillConfig(c) {
   set("historyDays", c.historyDays);
   set("dailyStart", c.dailyStart || "08:00");
   set("dailyStop", c.dailyStop || "22:00");
-  document.getElementById("dailyEnabled").checked = !!c.dailyEnabled;
-  document.getElementById("excludeOciFromScheduler").checked = c.excludeOciFromScheduler !== false;
+  chk("dailyEnabled", c.dailyEnabled);
+  chk("excludeOciFromScheduler", c.excludeOciFromScheduler !== false);
   set("vmStoragePath", c.vmStoragePath);
   set("sharedDir", c.sharedDir);
   set("tartAppPath", c.tartAppPath || "/Applications/tart.app/Contents/MacOS/tart");
-  set("jamfBaseUrl", c.jamfBaseUrl || "");
   set("sshUser", c.sshUser || "admin");
   set("sshKey", c.sshKey || "");
   set("sshTimeoutSec", c.sshTimeoutSec);
@@ -1035,16 +1035,18 @@ function fillConfig(c) {
   set("excluded", (c.excluded || []).join("\n"));
   set("serverLabel", c.serverLabel || "");
   set("logPath", c.logPath || "");
-  document.getElementById("showRunningOnly").checked = !!c.showRunningOnly;
+  chk("showRunningOnly", c.showRunningOnly);
   renderJamfProfiles();
   configLoaded = true;
 }
 function setSavedSecretPlaceholder(id, isSaved) {
-  document.getElementById(id).placeholder = isSaved ? "•••••••• (saved)" : "";
+  const el = document.getElementById(id);
+  if (el) el.placeholder = isSaved ? "•••••••• (saved)" : "";
 }
 function readConfig() {
-  const num = (id) => parseInt(document.getElementById(id).value, 10) || 0;
-  const str = (id) => document.getElementById(id).value.trim();
+  const num = (id) => { const el = document.getElementById(id); return el ? (parseInt(el.value, 10) || 0) : 0; };
+  const str = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  const chk = (id) => { const el = document.getElementById(id); return el ? !!el.checked : false; };
   const excluded = str("excluded").split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
   return {
     listen: str("listen"), vmStoragePath: str("vmStoragePath"), sharedDir: str("sharedDir"),
