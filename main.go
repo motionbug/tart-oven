@@ -41,7 +41,7 @@ import (
 //go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.37"
+const version = "1.38"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -258,17 +258,18 @@ type Config struct {
 	JamfBaseURL             string        `json:"jamfBaseUrl,omitempty"`
 	JamfInvitationCode      string        `json:"jamfInvitationCode,omitempty"`
 	SSHUser                 string        `json:"sshUser"`
-	SSHPassword             string        `json:"sshPassword"`     // guest SSH/sudo password; write-only
-	SSHKey                  string        `json:"sshKey"`          // optional identity file path
-	SSHTimeoutSec           int           `json:"sshTimeoutSec"`   // ssh connect timeout
-	StatusCommand           string        `json:"statusCommand"`   // command for "Get info"
-	RunArgs                 string        `json:"runArgs"`         // extra args appended to every `tart run`
-	NetPriority             string        `json:"netPriority"`     // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec          int           `json:"bootTimeoutSec"`  // wait for IP before declaring boot failure
-	HistoryDays             int           `json:"historyDays"`     // run-history retention in days
-	LogPath                 string        `json:"logPath"`         // path to log file (rotation at 5MB)
-	ServerLabel             string        `json:"serverLabel"`     // custom label to identify this server instance
-	ShowRunningOnly         bool          `json:"showRunningOnly"` // dashboard filter: show only running VMs
+	SSHPassword             string        `json:"sshPassword"`        // guest SSH/sudo password; write-only
+	SSHKey                  string        `json:"sshKey"`             // identity file for the SSH fallback
+	SSHFallbackEnabled      bool          `json:"sshFallbackEnabled"` // allow SSH when a guest has no Tart guest agent
+	SSHTimeoutSec           int           `json:"sshTimeoutSec"`      // ssh connect timeout
+	StatusCommand           string        `json:"statusCommand"`      // command for "Get info"
+	RunArgs                 string        `json:"runArgs"`            // extra args appended to every `tart run`
+	NetPriority             string        `json:"netPriority"`        // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec          int           `json:"bootTimeoutSec"`     // wait for IP before declaring boot failure
+	HistoryDays             int           `json:"historyDays"`        // run-history retention in days
+	LogPath                 string        `json:"logPath"`            // path to log file (rotation at 5MB)
+	ServerLabel             string        `json:"serverLabel"`        // custom label to identify this server instance
+	ShowRunningOnly         bool          `json:"showRunningOnly"`    // dashboard filter: show only running VMs
 }
 
 type configView struct {
@@ -341,6 +342,7 @@ func defaultConfig() Config {
 		SSHUser:                 "admin",
 		SSHPassword:             "admin",
 		SSHKey:                  "~/.ssh/tart-oven",
+		SSHFallbackEnabled:      true,
 		SSHTimeoutSec:           15,
 		StatusCommand:           `hostname; ioreg -c IOPlatformExpertDevice -d 2 | awk -F \" '/IOPlatformSerialNumber/{print $(NF-1)}'; sw_vers -productVersion; defaults read /Library/Managed\ Preferences/com.jamf.usernamevariable.plist jamfProUsername 2>/dev/null || echo "(no Jamf user)"`,
 		RunArgs:                 "",
@@ -554,10 +556,16 @@ func (m *Manager) load() {
 	var presence struct {
 		Config struct {
 			ExcludeOCIFromScheduler *bool `json:"excludeOciFromScheduler"`
+			SSHFallbackEnabled      *bool `json:"sshFallbackEnabled"`
 		} `json:"config"`
 	}
-	if err := json.Unmarshal(data, &presence); err == nil && presence.Config.ExcludeOCIFromScheduler == nil {
-		m.cfg.ExcludeOCIFromScheduler = d.ExcludeOCIFromScheduler
+	if err := json.Unmarshal(data, &presence); err == nil {
+		if presence.Config.ExcludeOCIFromScheduler == nil {
+			m.cfg.ExcludeOCIFromScheduler = d.ExcludeOCIFromScheduler
+		}
+		if presence.Config.SSHFallbackEnabled == nil {
+			m.cfg.SSHFallbackEnabled = d.SSHFallbackEnabled
+		}
 	}
 	if m.cfg.Listen == "" {
 		m.cfg.Listen = d.Listen
@@ -2924,6 +2932,16 @@ func (m *Manager) routes() *http.ServeMux {
 		m.broadcast()
 		writeJSON(w, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("/api/vm/install-agent", func(w http.ResponseWriter, r *http.Request) {
+		name, err := decodeName(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		go m.installGuestAgent(name)
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
 	mux.HandleFunc("/api/vm/mdm-profile", m.handleMDMProfile)
 
 	// Install or update tart (downloads the latest release either way).
@@ -3175,6 +3193,12 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var v string
 		if json.Unmarshal(raw, &v) == nil && v != "" {
 			m.cfg.SSHPassword = v
+		}
+	}
+	if raw, ok := fields["sshFallbackEnabled"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.SSHFallbackEnabled = v
 		}
 	}
 	if raw, ok := fields["sshKey"]; ok {

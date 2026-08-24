@@ -6,7 +6,7 @@ control and monitor them.
 
 This VM orchestration server fully relies on Tart and Apple's native `Virtualization.framework`.
 
-Current release: **1.37**. [View Changelog](CHANGELOG.md) for full release notes and update details.
+Current release: **1.38**. [View Changelog](CHANGELOG.md) for full release notes and update details.
 
 ---
 
@@ -125,11 +125,11 @@ To access the web dashboard from another Mac or PC on your local network:
 
 ## 7. Installation, Upgrades & Deployment
 
-### Install or Upgrade to 1.37
-Double-click `TartOven-1.37.pkg` or run from Terminal:
+### Install or Upgrade to 1.38
+Double-click `TartOven-1.38.pkg` or run from Terminal:
 
 ```sh
-sudo installer -pkg ~/Downloads/TartOven-1.37.pkg -target /
+sudo installer -pkg ~/Downloads/TartOven-1.38.pkg -target /
 ```
 
 This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing configuration in `~/.tart-oven/state.json`.
@@ -141,7 +141,7 @@ This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, r
 go build -o tart-oven .
 
 # 2. Build & sign macOS installer package (.pkg)
-# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.37.pkg
+# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.38.pkg
 ./packaging/build-pkg.sh
 ```
 

@@ -1,6 +1,7 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.37 runs guest commands
+This file records user-visible changes to Tart Oven. Version 1.38 makes the SSH
+fallback optional and adds a guest agent installer. Version 1.37 runs guest commands
 through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
 introduced one release earlier, and finishes removing Suspend. Version 1.36 moves the theme
 control into the header, simplifies host metrics onto a single source of truth, and
@@ -12,6 +13,32 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.38 — 2026-08-24
+
+### SSH Is Now Optional
+
+- **Allow SSH fallback for guest commands**: A new setting under **Configuration → SSH
+  & Commands**, on by default. Turn it off and Tart Oven talks to guests **only** through
+  the Tart guest agent — if a guest does not answer, you get a clear message naming that
+  instead of a silent SSH attempt.
+- **The SSH setup guide disappears when it cannot apply**: With the fallback off, the
+  **SSH setup guide** panel and the **SSH identity file** field are hidden. Previously
+  the guide was always on screen in VM Management even for fleets where every VM uses
+  the agent and none of it applied.
+- **Deploy MDM Profile is unaffected**: Jamf enrollment copies a file over SFTP, which
+  the guest agent cannot do, so that path keeps using SSH regardless of this setting.
+  The default SSH username and password stay visible because it still needs them.
+
+### Install the Guest Agent From the Dashboard
+
+- **Install agent**: A running VM whose commands fell back to SSH now offers an **Install
+  agent** action. It installs `tart-guest-agent` through Homebrew inside the guest, sets
+  up its two launchd jobs, and then **verifies the agent actually answers** before
+  reporting success — rather than trusting the install output.
+- Progress streams to the **Activity** panel. The action needs the guest's SSH password
+  and sudo, because the agent is exactly what is missing and so cannot install itself.
+  It is intended for preparing a base image before cloning.
 
 ## 1.37 — 2026-08-24
 

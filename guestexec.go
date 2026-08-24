@@ -100,6 +100,14 @@ func (m *Manager) execInGuest(ctx context.Context, name, command, sudoPassword s
 		return res
 	}
 	m.setAgentOK(name, false)
+
+	m.mu.Lock()
+	fallback := m.cfg.SSHFallbackEnabled
+	m.mu.Unlock()
+	if !fallback {
+		return execResult{Error: "the Tart guest agent did not respond and the SSH fallback is turned off — " +
+			"install the agent on this VM, or re-enable the SSH fallback in Configuration"}
+	}
 	return m.sshExecContext(ctx, name, command, sudoPassword)
 }
 

@@ -524,7 +524,7 @@
       <p class="muted" style="margin:10px 0 0">VM must be stopped. Delete cannot be undone.</p>
     </div>
 
-    <div class="panel guide">
+    <div class="panel guide" id="sshGuidePanel">
       <h2>SSH setup guide</h2>
       <p class="muted"><b>Most VMs need none of this.</b> Tart Oven runs <b>Send command</b> and <b>Get info</b> through the <b>Tart guest agent</b> — no SSH, no key, no credentials — and the official <span class="mono">ghcr.io/cirruslabs/macos-*-base</span> images ship the agent preinstalled. The VM row shows <span class="mono">agent</span> when that path is in use.</p>
       <p class="muted">Follow the steps below only for a guest <b>without</b> the agent (for example a <span class="mono">vanilla-*</span> image), where Tart Oven falls back to SSH. To add the agent to such an image instead, run <span class="mono">brew install openai/tools/tart-guest-agent</span> inside the guest once, before cloning it. Run the commands below <b>on the Mac mini</b> — the key stays on the mini.</p>
@@ -588,9 +588,10 @@
       <div class="grid">
         <div class="field"><label for="sshUser">Default SSH username</label><input type="text" id="sshUser" value="admin" autocomplete="username"><small>Used unless a VM-specific username is configured</small></div>
         <div class="field"><label for="sshPassword">Default SSH password</label><input type="password" id="sshPassword" autocomplete="new-password"><small>Leave blank to keep the saved password</small></div>
-        <div class="field"><label>SSH identity file</label><input type="text" id="sshKey"><small>Used only when a guest has no Tart guest agent. Must start with ~/ or /</small></div>
+        <div class="field" id="sshKeyField"><label>SSH identity file</label><input type="text" id="sshKey"><small>Used only when a guest has no Tart guest agent. Must start with ~/ or /</small></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="sshFallbackEnabled"><span class="slider"></span></span> Allow SSH fallback for guest commands</label><small>Off = agent only. Hides the SSH setup guide and identity file.</small></div>
       </div>
     </div>
 
@@ -1053,6 +1054,7 @@ function fillConfig(c) {
   set("serverLabel", c.serverLabel || "");
   set("logPath", c.logPath || "");
   chk("showRunningOnly", c.showRunningOnly);
+  chk("sshFallbackEnabled", c.sshFallbackEnabled !== false);
   renderJamfProfiles();
   configLoaded = true;
 }
@@ -1077,6 +1079,7 @@ function readConfig() {
     excluded,
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
+    sshFallbackEnabled: chk("sshFallbackEnabled"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
   };
@@ -1431,6 +1434,39 @@ function setHeaderStat(id, text, ratio) {
 
 // Renders header host metrics from the newest performance sample. Each metric falls
 // back to "—" on its own so one unavailable source never blanks the others.
+// Shows or hides the SSH-only surfaces. The identity file and the setup guide have
+// no meaning when guest commands can only travel through the Tart guest agent.
+// Offers the guest-agent install only where it is actionable: a running VM whose
+// last command had to fall back to SSH. VMs already on the agent get nothing.
+function agentInstallButton(vm, name, notRunning) {
+  const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
+  if (!checked || vm.agentOk || vm.state !== "running") return "";
+  return '<button class="ghost" onclick="installAgent(\'' + name + '\')"' + notRunning +
+    ' title="Install the Tart guest agent so this VM stops needing SSH">Install agent</button>';
+}
+
+async function installAgent(name) {
+  if (!confirm("Install the Tart guest agent on " + name + "?\n\nThis runs over SSH with the configured guest password, installs via Homebrew inside the guest, and needs sudo. Best run on a base image before cloning.")) return;
+  try {
+    const res = await api("/api/vm/install-agent", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    toast(name, "Installing the guest agent — see Activity for progress", "ok");
+    showTab("logs");
+  } catch (err) {
+    toast("Install failed", err.message, "bad");
+  }
+}
+
+function applySSHFallbackVisibility(enabled) {
+  const guide = document.getElementById("sshGuidePanel");
+  if (guide) guide.style.display = enabled ? "" : "none";
+  const keyField = document.getElementById("sshKeyField");
+  if (keyField) keyField.style.display = enabled ? "" : "none";
+}
+
 function renderHeaderStats(sample) {
   const gb = (bytes) => ((bytes || 0) / (1 << 30)).toFixed(1);
   if (sample.cpuAvailable) {
@@ -1460,6 +1496,10 @@ function render(state) {
   el("hmeta").textContent = "v" + state.version + " · " + state.vms.length + " VMs";
 
   renderHeaderStats(state.performance || {});
+
+  // With the SSH fallback off, everything SSH-only is dead UI: hide it rather than
+  // leaving instructions on screen for a path that can no longer run.
+  applySSHFallbackVisibility(state.config.sshFallbackEnabled !== false);
 
   document.getElementById("tartBanner").style.display = state.tartInstalled ? "none" : "flex";
   document.getElementById("tartVersionLabel").textContent =
@@ -1603,6 +1643,7 @@ function renderTable(vms) {
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + stopDisabled + '>Stop</button>' +
         '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
+        agentInstallButton(vm, n, notRunning) +
         '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
         '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
       '</div></td></tr>';
