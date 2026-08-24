@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,45 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboard missing %q", want)
+		}
+	}
+}
+
+func TestDashboardRestoresGlobalSSHControlsAndSafeGuideBinding(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	sshConfig := sourceSection(t, html, `<h2>SSH &amp; Commands</h2>`, `<h2>Server Settings</h2>`)
+	for _, want := range []string{
+		`id="sshUser"`, `id="sshPassword"`, `for="sshUser"`, `for="sshPassword"`,
+		`Default SSH username`, `Default SSH password`,
+	} {
+		if !strings.Contains(sshConfig, want) {
+			t.Errorf("SSH configuration missing %q", want)
+		}
+	}
+	for _, want := range []string{`function bindSshGuideInputs`, `if (el) el.addEventListener("input", updateSshGuide)`, `bindSshGuideInputs();`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard startup is not protected from a missing SSH guide input: missing %q", want)
+		}
+	}
+}
+
+func TestEveryLiteralDOMIDReferenceHasAnElement(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	ids := make(map[string]bool)
+	for _, match := range regexp.MustCompile(`\bid="([^"]+)"`).FindAllStringSubmatch(html, -1) {
+		ids[match[1]] = true
+	}
+	for _, match := range regexp.MustCompile(`getElementById\("([^"]+)"\)`).FindAllStringSubmatch(html, -1) {
+		if !ids[match[1]] {
+			t.Errorf("JavaScript references missing DOM id %q", match[1])
 		}
 	}
 }

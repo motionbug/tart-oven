@@ -242,3 +242,29 @@ test("SSH and MDM helpers ignore running OCI entries", () => {
   evaluateFunction("updateMdmCopyButton", globals)(vms);
   assert.equal(elements.copyMdmBtn.disabled, true);
 });
+
+test("SSH guide falls back to saved configuration when its username input is absent", () => {
+  const sshGuideUser = evaluateFunction("sshGuideUser", {
+    document: { getElementById: () => null },
+    latest: { config: { sshUser: "builder" } },
+  });
+  assert.equal(sshGuideUser(), "builder");
+});
+
+test("SSH guide uses its default key path when the key input is absent", () => {
+  const sshGuideKey = evaluateFunction("sshGuideKey", {
+    document: { getElementById: () => null },
+  });
+  assert.equal(sshGuideKey(), "~/.ssh/tart-oven");
+});
+
+test("SSH guide input binding skips missing optional controls without aborting startup", () => {
+  let listeners = 0;
+  const sshKey = { addEventListener(name) { if (name === "input") listeners++; } };
+  const bindSshGuideInputs = evaluateFunction("bindSshGuideInputs", {
+    document: { getElementById: id => id === "sshKey" ? sshKey : null },
+    updateSshGuide() {},
+  });
+  assert.doesNotThrow(() => bindSshGuideInputs());
+  assert.equal(listeners, 1);
+});

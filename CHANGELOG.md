@@ -24,6 +24,10 @@ scheduling by default.
 - **Interactive Changelog Popup Modal**: Viewing the changelog in the web dashboard
   now opens a responsive, scrollable popup modal that renders `CHANGELOG.md` dynamically
   in-place without page reloads or 404 errors.
+- **Dashboard Startup Reliability**: Restored the global SSH username/password
+  controls expected by configuration and the SSH setup guide. Guide initialization
+  now tolerates missing optional controls instead of aborting the dashboard before
+  its live event connection starts.
 - **Signed Installer Package (`~/Downloads`)**: `./packaging/build-pkg.sh` now
   automatically detects installed Developer ID certificates in the macOS Keychain,
   signs both the binary (Hardened Runtime) and installer package, and outputs the

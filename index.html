@@ -524,7 +524,7 @@
 
     <div class="panel guide">
       <h2>SSH setup guide</h2>
-      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from the Default SSH username in <b>Prepare base VM for Jamf</b> and the SSH identity file in Configuration.</p>
+      <p class="muted">Enable <b>Send command</b> / <b>Get info</b> by giving the Mac mini a key your VMs trust. Run these <b>on the Mac mini</b> (where Tart Oven runs) — the key stays on the mini. The commands below fill in from the Default SSH username and SSH identity file in Configuration.</p>
 
       <h3>1 · Generate a key (once)</h3>
       <div class="cmd"><code id="cmdKeygen"></code><button onclick="copyCmd('cmdKeygen', this)">Copy</button></div>
@@ -583,6 +583,8 @@
     <div class="panel">
       <h2>SSH &amp; Commands</h2>
       <div class="grid">
+        <div class="field"><label for="sshUser">Default SSH username</label><input type="text" id="sshUser" value="admin" autocomplete="username"><small>Used unless a VM-specific username is configured</small></div>
+        <div class="field"><label for="sshPassword">Default SSH password</label><input type="password" id="sshPassword" autocomplete="new-password"><small>Leave blank to keep the saved password</small></div>
         <div class="field"><label>SSH identity file (optional)</label><input type="text" id="sshKey"></div>
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
@@ -1985,8 +1987,14 @@ document.getElementById("updateTartBtn").onclick = async (e) => {
 };
 
 // ---- SSH setup guide ----
-function sshGuideKey() { return (document.getElementById("sshKey").value.trim() || "~/.ssh/tart-oven"); }
-function sshGuideUser() { return (document.getElementById("sshUser").value.trim() || "admin"); }
+function sshGuideKey() {
+  const el = document.getElementById("sshKey");
+  return (el && el.value.trim()) || "~/.ssh/tart-oven";
+}
+function sshGuideUser() {
+  const el = document.getElementById("sshUser");
+  return (el && el.value.trim()) || (latest && latest.config && latest.config.sshUser) || "admin";
+}
 function updateSshGuide() {
   const key = sshGuideKey(), user = sshGuideUser();
   const ip = document.getElementById("sshGuideVm").value || "<vm-ip>";
@@ -2013,7 +2021,13 @@ function copyCmd(id, btn) {
     setTimeout(() => btn.textContent = o, 1500);
   });
 }
-["sshUser", "sshKey"].forEach(id => document.getElementById(id).addEventListener("input", updateSshGuide));
+function bindSshGuideInputs() {
+  ["sshUser", "sshKey"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", updateSshGuide);
+  });
+}
+bindSshGuideInputs();
 
 // ---- server control ----
 document.getElementById("srvScreen").onclick = () => {
