@@ -27,27 +27,64 @@ APPDIR="Library/Application Support/Tart Oven"
 
 VERSION=$(sed -n 's/^const version = "\(.*\)"/\1/p' main.go)
 [ -n "$VERSION" ] || { echo "could not read version from main.go"; exit 1; }
-OUT="TartOven-${VERSION}.pkg"
 
-# Ask about signing
-echo ""
-read -p "Do you want to sign and notarize the PKG? [y/N] " SIGN_ANSWER
-SIGN_ANSWER=${SIGN_ANSWER:-n}
+OUT_DIR="${OUT_DIR:-$HOME/Downloads}"
+mkdir -p "$OUT_DIR"
+OUT="${OUT_DIR}/TartOven-${VERSION}.pkg"
 
-if [[ "$SIGN_ANSWER" =~ ^[Yy]$ ]]; then
-    echo ""
-    echo "Enter your Apple Developer signing details:"
-    read -p "  Full name (as in certificate): " DEV_NAME
-    read -p "  Team ID: " TEAM_ID
-    read -p "  Apple ID email: " APPLE_EMAIL
-    read -s -p "  App-specific password: " APP_PASSWORD
-    echo ""
+# Auto-detect Developer ID identities from Keychain
+DETECTED_APP_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application:" | head -n 1 | sed -E 's/.*"Developer ID Application: ([^"]+)".*/Developer ID Application: \1/' || true)
+DETECTED_PKG_ID=$(security find-identity -v 2>/dev/null | grep "Developer ID Installer:" | head -n 1 | sed -E 's/.*"Developer ID Installer: ([^"]+)".*/Developer ID Installer: \1/' || true)
 
-    APP_SIGN_IDENTITY="Developer ID Application: $DEV_NAME ($TEAM_ID)"
-    PKG_SIGN_IDENTITY="Developer ID Installer: $DEV_NAME ($TEAM_ID)"
+APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:-$DETECTED_APP_ID}"
+PKG_SIGN_IDENTITY="${PKG_SIGN_IDENTITY:-$DETECTED_PKG_ID}"
+DO_SIGN=false
+DO_NOTARIZE=false
+
+# Check environment or prompt
+if [ -n "${SIGN_PKG:-}" ] && [ "$SIGN_PKG" = "true" ]; then
+    if [ -n "$APP_SIGN_IDENTITY" ] && [ -n "$PKG_SIGN_IDENTITY" ]; then
+        DO_SIGN=true
+    fi
+elif [ -n "${APP_SIGN_IDENTITY}" ] && [ -n "${PKG_SIGN_IDENTITY}" ]; then
     DO_SIGN=true
-else
-    DO_SIGN=false
+elif [ -t 0 ]; then
+    echo ""
+    read -p "Do you want to sign the PKG with Developer ID? [Y/n] " SIGN_ANSWER
+    SIGN_ANSWER=${SIGN_ANSWER:-y}
+    if [[ "$SIGN_ANSWER" =~ ^[Yy]$ ]]; then
+        if [ -n "$DETECTED_APP_ID" ] && [ -n "$DETECTED_PKG_ID" ]; then
+            echo "  Using detected identities:"
+            echo "    App: $DETECTED_APP_ID"
+            echo "    Pkg: $DETECTED_PKG_ID"
+            APP_SIGN_IDENTITY="$DETECTED_APP_ID"
+            PKG_SIGN_IDENTITY="$DETECTED_PKG_ID"
+            DO_SIGN=true
+        else
+            echo "Enter your Apple Developer signing details:"
+            read -p "  Full name (as in certificate): " DEV_NAME
+            read -p "  Team ID: " TEAM_ID
+            APP_SIGN_IDENTITY="Developer ID Application: $DEV_NAME ($TEAM_ID)"
+            PKG_SIGN_IDENTITY="Developer ID Installer: $DEV_NAME ($TEAM_ID)"
+            DO_SIGN=true
+        fi
+        
+        read -p "Do you also want to submit for Apple Notarization? [y/N] " NOTARIZE_ANSWER
+        NOTARIZE_ANSWER=${NOTARIZE_ANSWER:-n}
+        if [[ "$NOTARIZE_ANSWER" =~ ^[Yy]$ ]]; then
+            read -p "  Team ID: " TEAM_ID
+            read -p "  Apple ID email: " APPLE_EMAIL
+            read -s -p "  App-specific password: " APP_PASSWORD
+            echo ""
+            DO_NOTARIZE=true
+        fi
+    fi
+fi
+
+if [ "$DO_SIGN" = true ]; then
+    echo "==> Signing enabled:"
+    echo "    App binary: $APP_SIGN_IDENTITY"
+    echo "    Installer:  $PKG_SIGN_IDENTITY"
 fi
 
 echo ""
@@ -133,10 +170,10 @@ if [ -n "$PAYLOAD_MOUNT" ]; then
     PAYLOAD_MOUNT=""
 fi
 
-echo "==> PKG built: $REPO/$OUT"
+echo "==> PKG built: $OUT"
 
-# Notarize and staple if signing is enabled
-if [ "$DO_SIGN" = true ]; then
+# Notarize and staple if notarization is enabled
+if [ "$DO_NOTARIZE" = true ]; then
     echo ""
     echo "==> Submitting for notarization…"
     xcrun notarytool submit "$OUT" \
@@ -151,5 +188,5 @@ if [ "$DO_SIGN" = true ]; then
 fi
 
 echo ""
-echo "==> Done: $REPO/$OUT"
+echo "==> Done: $OUT"
 echo "    Install: sudo installer -pkg \"$OUT\" -target /"
