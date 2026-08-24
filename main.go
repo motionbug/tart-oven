@@ -200,6 +200,14 @@ func setupLogging(logPath string) {
 }
 
 // expandHome replaces a leading ~ with the user's home directory.
+// validSSHKeyPath rejects blank and relative identity paths. A relative path would
+// resolve against the server's working directory — "/" under the LaunchAgent — so
+// the key would be written to, and read from, somewhere the operator never intended.
+func validSSHKeyPath(path string) bool {
+	path = strings.TrimSpace(path)
+	return strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "/")
+}
+
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -591,6 +599,9 @@ func (m *Manager) load() {
 	}
 	if m.cfg.StatusCommand == "" {
 		m.cfg.StatusCommand = d.StatusCommand
+	}
+	if !validSSHKeyPath(m.cfg.SSHKey) {
+		m.cfg.SSHKey = d.SSHKey
 	}
 	if m.cfg.Excluded == nil {
 		m.cfg.Excluded = []string{}
@@ -3225,8 +3236,8 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if raw, ok := fields["sshKey"]; ok {
 		var v string
-		if json.Unmarshal(raw, &v) == nil {
-			m.cfg.SSHKey = v
+		if json.Unmarshal(raw, &v) == nil && validSSHKeyPath(v) {
+			m.cfg.SSHKey = strings.TrimSpace(v)
 		}
 	}
 	if raw, ok := fields["sshTimeoutSec"]; ok {

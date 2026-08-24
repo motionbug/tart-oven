@@ -228,3 +228,26 @@ func TestHandleConfigJamfProfiles(t *testing.T) {
 		t.Errorf("InvitationCode was not preserved: %q", m.cfg.JamfProfiles[0].InvitationCode)
 	}
 }
+
+func TestSSHKeyPathRejectsBlankAndRelative(t *testing.T) {
+	for _, bad := range []string{"", "   ", "tart-oven", "./keys/id", "keys/id"} {
+		if validSSHKeyPath(bad) {
+			t.Fatalf("%q must be rejected", bad)
+		}
+	}
+	for _, good := range []string{"~/.ssh/tart-oven", "/Users/rob/.ssh/id_ed25519"} {
+		if !validSSHKeyPath(good) {
+			t.Fatalf("%q must be accepted", good)
+		}
+	}
+}
+
+func TestConfigMergeRejectsARelativeSSHKey(t *testing.T) {
+	m := &Manager{cfg: defaultConfig(), vms: map[string]*VM{}, busy: map[string]bool{},
+		statePath: filepath.Join(t.TempDir(), "state.json"), reload: make(chan struct{}, 1)}
+	m.handleConfig(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(`{"sshKey":"tart-oven"}`)))
+	if m.cfg.SSHKey != "~/.ssh/tart-oven" {
+		t.Fatalf("sshKey = %q, want the default preserved", m.cfg.SSHKey)
+	}
+}
