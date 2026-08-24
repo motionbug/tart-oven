@@ -122,7 +122,7 @@ test("performanceColour keeps thresholds associated with their metric", () => {
   }
 });
 
-test("compact header keeps CPU and disk thresholds metric-specific while preserving RAM", () => {
+test("header thresholds stay metric-specific for CPU and RAM", () => {
   const elements = new Map();
   const setHeaderStat = evaluateFunctions(["headerStatColour", "setHeaderStat"], "setHeaderStat", {
     document: {
@@ -136,14 +136,40 @@ test("compact header keeps CPU and disk thresholds metric-specific while preserv
   for (const [id, ratio, expected] of [
     ["statCpu", 0.80, "var(--text)"], ["statCpu", 0.81, "var(--amber)"],
     ["statCpu", 0.95, "var(--amber)"], ["statCpu", 0.96, "var(--red)"],
-    ["statDisk", 0.80, "var(--text)"], ["statDisk", 0.81, "var(--amber)"],
-    ["statDisk", 0.90, "var(--amber)"], ["statDisk", 0.91, "var(--red)"],
     ["statRam", 0.74, "var(--text)"], ["statRam", 0.75, "var(--amber)"],
     ["statRam", 0.90, "var(--red)"],
   ]) {
     setHeaderStat(id, "value", ratio);
     assert.equal(elements.get(id).style.color, expected, id + " at " + ratio);
   }
+});
+
+test("header renders each metric independently when a source is unavailable", () => {
+  const elements = new Map();
+  const renderHeaderStats = evaluateFunctions(
+    ["headerStatColour", "setHeaderStat", "performanceColour", "renderHeaderStats"],
+    "renderHeaderStats",
+    {
+      Math,
+      document: {
+        getElementById(id) {
+          if (!elements.has(id)) elements.set(id, { textContent: "", style: {} });
+          return elements.get(id);
+        },
+      },
+    },
+  );
+
+  renderHeaderStats({
+    cpuAvailable: true, cpuPercent: 34,
+    memoryAvailable: false,
+    pressureAvailable: true, memoryPressure: "critical",
+  });
+
+  assert.equal(elements.get("statCpu").textContent, "34%");
+  assert.equal(elements.get("statRam").textContent, "—");
+  assert.equal(elements.get("statPressure").textContent, "critical");
+  assert.equal(elements.get("statPressure").style.color, "var(--red)");
 });
 
 test("renderOCIImages hides cached images for running-only and renders clone-only rows", () => {

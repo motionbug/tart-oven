@@ -33,6 +33,8 @@
   .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
   .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--grey); }
   .stat-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+  .theme-toggle { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; padding: 6px 9px; }
+  .theme-toggle:hover { border-color: var(--cyan); }
   /* markdown (Helper Guide) */
   .markdown { line-height: 1.6; }
   .markdown h1 { font-size: 22px; margin: 18px 0 8px; }
@@ -270,8 +272,9 @@
     <span id="serverLabelDisplay" class="server-label"></span>
     <div class="stat"><span class="stat-label">CPU</span><span id="statCpu" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">RAM</span><span id="statRam" class="stat-val">—</span></div>
-    <div class="stat"><span class="stat-label">VM disk</span><span id="statDisk" class="stat-val">—</span></div>
+    <div class="stat"><span class="stat-label">Pressure</span><span id="statPressure" class="stat-val">—</span></div>
     <div class="meta" id="hmeta">connecting…</div>
+    <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to light mode">🌙</button>
   </div>
 </header>
 
@@ -1405,32 +1408,47 @@ function headerStatColour(id, ratio) {
   if (id === "statCpu") {
     return ratio > 0.95 ? "var(--red)" : (ratio > 0.80 ? "var(--amber)" : "var(--text)");
   }
-  if (id === "statDisk") {
-    return ratio > 0.90 ? "var(--red)" : (ratio > 0.80 ? "var(--amber)" : "var(--text)");
-  }
   return ratio >= 0.90 ? "var(--red)" : (ratio >= 0.75 ? "var(--amber)" : "var(--text)");
 }
 
 function setHeaderStat(id, text, ratio) {
   const element = document.getElementById(id);
+  if (!element) return;
   element.textContent = text;
   element.style.color = headerStatColour(id, ratio);
+}
+
+// Renders header host metrics from the newest performance sample. Each metric falls
+// back to "—" on its own so one unavailable source never blanks the others.
+function renderHeaderStats(sample) {
+  const gb = (bytes) => ((bytes || 0) / (1 << 30)).toFixed(1);
+  if (sample.cpuAvailable) {
+    const percent = Math.round(sample.cpuPercent || 0);
+    setHeaderStat("statCpu", percent + "%", percent / 100);
+  } else {
+    setHeaderStat("statCpu", "—", 0);
+  }
+  if (sample.memoryAvailable && sample.memoryTotalBytes) {
+    setHeaderStat("statRam", gb(sample.memoryUsedBytes) + "/" + gb(sample.memoryTotalBytes) + " GB",
+      sample.memoryUsedBytes / sample.memoryTotalBytes);
+  } else {
+    setHeaderStat("statRam", "—", 0);
+  }
+  const pressure = document.getElementById("statPressure");
+  if (pressure) {
+    const available = !!(sample.pressureAvailable && sample.memoryPressure);
+    pressure.textContent = available ? sample.memoryPressure : "—";
+    pressure.style.color = available ? performanceColour("pressure", sample.memoryPressure) : "var(--text)";
+  }
 }
 
 function render(state) {
   latest = state;
   clockSkew = new Date(state.now).getTime() - Date.now();
 
-  document.getElementById("hmeta").textContent =
-    "v" + state.version + " · " + state.vms.length + " VMs";
+  el("hmeta").textContent = "v" + state.version + " · " + state.vms.length + " VMs";
 
-  // host health stats (refreshed server-side ~once a minute)
-  const hs = state.hostStats || {};
-  if (hs.updatedAt && !hs.updatedAt.startsWith("0001")) {
-    setHeaderStat("statCpu", (hs.cpuPercent || 0) + "%", (hs.cpuPercent || 0) / 100);
-    setHeaderStat("statRam", (hs.memUsedMB || 0) + "/" + (hs.memTotalMB || 0) + " MB", hs.memTotalMB ? hs.memUsedMB / hs.memTotalMB : 0);
-    setHeaderStat("statDisk", (hs.diskUsedGB || 0) + "/" + (hs.diskTotalGB || 0) + " GB", hs.diskTotalGB ? hs.diskUsedGB / hs.diskTotalGB : 0);
-  }
+  renderHeaderStats(state.performance || {});
 
   document.getElementById("tartBanner").style.display = state.tartInstalled ? "none" : "flex";
   document.getElementById("tartVersionLabel").textContent =
