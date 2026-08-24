@@ -2557,22 +2557,25 @@ func (m *Manager) handleMDMProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveVMIPRobust runs the same multi-tier IP resolution the boot path uses,
-// so on-demand resolution (Get info, Send command, MDM deploy) succeeds on the
-// hosts the boot fix was written for: match Tart's configured MAC against the
-// host ARP table first, then fall back to Tart's own ARP resolver and its
-// default resolver. waitSec bounds each Tart fallback's --wait.
+// resolveVMIPRobust resolves a guest IP, preferring the Tart guest agent, which
+// Tart documents as the only resolver that works reliably in all cases and which
+// needs no guest network traffic at all. The host ARP match and Tart's own ARP
+// resolver are kept for guests without the agent. waitSec bounds each --wait.
+//
+// The `dhcp` resolver is deliberately absent: Tart only populates a DHCP lease for
+// VMs that are NOT bridged, and Tart Oven always runs bridged, so that tier could
+// never succeed.
 func (m *Manager) resolveVMIPRobust(ctx context.Context, home, name string, waitSec int) (string, error) {
-	if ip, err := resolveVMIP(home, name, hostARPNeighbors); err == nil && strings.TrimSpace(ip) != "" {
-		return strings.TrimSpace(ip), nil
-	}
 	wait := strconv.Itoa(waitSec)
-	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait, "--resolver", "arp").Output(); err == nil {
+	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait, "--resolver", "agent").Output(); err == nil {
 		if ip := strings.TrimSpace(string(out)); ip != "" {
 			return ip, nil
 		}
 	}
-	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait).Output(); err == nil {
+	if ip, err := resolveVMIP(home, name, hostARPNeighbors); err == nil && strings.TrimSpace(ip) != "" {
+		return strings.TrimSpace(ip), nil
+	}
+	if out, err := m.tartCmdCtx(ctx, home, "ip", name, "--wait", wait, "--resolver", "arp").Output(); err == nil {
 		if ip := strings.TrimSpace(string(out)); ip != "" {
 			return ip, nil
 		}
