@@ -24,11 +24,21 @@ const (
 // SSH transport feeds the sudo password once on stdin, and sudo's credential cache
 // is not shared between separate calls in a non-interactive session, so a second
 // `sudo` in this script would hang or fail. Homebrew must NOT run under sudo.
-func guestAgentInstallScript() string {
-	daemonPlist := launchdPlist(guestAgentDaemonLabel, "--run-daemon", true)
-	agentPlist := launchdPlist(guestAgentAgentLabel, "--run-agent", false)
+func guestAgentInstallScript(guestUser string) string {
+	guestUser = strings.TrimSpace(guestUser)
+	if guestUser == "" {
+		guestUser = "admin"
+	}
+	daemonPlist := launchdPlist(guestAgentDaemonLabel, "--run-daemon",
+		"/var/empty", "/tmp/tart-guest-daemon.log", false)
+	agentPlist := launchdPlist(guestAgentAgentLabel, "--run-agent",
+		"/Users/"+guestUser, "/tmp/tart-guest-agent.log", true)
 	return `
 set -e
+# A non-interactive SSH session gets PATH=/usr/bin:/bin:/usr/sbin:/sbin, which omits
+# every Homebrew prefix. Without this, the check below reports "not installed" on a
+# guest that has Homebrew sitting right there.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew is not installed in this guest; cannot install the Tart guest agent automatically." >&2
   exit 1
@@ -58,32 +68,49 @@ echo "==> installed"
 `
 }
 
-// launchdPlist renders a launchd job for the guest agent. The Homebrew prefix is
-// /opt/homebrew on Apple Silicon, which is the only architecture Tart supports.
-func launchdPlist(label, flag string, root bool) string {
-	extra := ""
-	if root {
-		extra = "\t<key>WorkingDirectory</key>\n\t<string>/var/empty</string>\n"
-	} else {
-		extra = "\t<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>TERM</key>\n\t\t<string>xterm-256color</string>\n\t</dict>\n"
+// guestAgentPATH is the PATH the upstream jobs export. Commands run through
+// `tart exec` inherit the agent's environment, so omitting this leaves them with
+// launchd's bare default and breaks anything resolved by name.
+const guestAgentPATH = "/bin:/usr/bin:/usr/sbin:/usr/local/bin:/opt/homebrew/bin"
+
+// launchdPlist renders a launchd job for the guest agent, matching the layout the
+// official Cirrus images install. The Homebrew prefix is /opt/homebrew on Apple
+// Silicon, the only architecture Tart supports.
+//
+// The daemon runs as root from /var/empty; the per-session agent runs from the
+// logged-in user's home and additionally exports TERM. Both write to /tmp so a
+// failed start can be diagnosed inside the guest.
+func launchdPlist(label, flag, workingDir, logPath string, term bool) string {
+	env := fmt.Sprintf("\t\t\t<key>PATH</key>\n\t\t\t<string>%s</string>\n", guestAgentPATH)
+	if term {
+		env += "\t\t\t<key>TERM</key>\n\t\t\t<string>xterm-256color</string>\n"
 	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>%s</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/opt/homebrew/bin/tart-guest-agent</string>
-		<string>%s</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-%s</dict>
-</plist>`, label, flag, extra)
+    <dict>
+        <key>Label</key>
+        <string>%s</string>
+        <key>ProgramArguments</key>
+        <array>
+            <string>/opt/homebrew/bin/tart-guest-agent</string>
+            <string>%s</string>
+        </array>
+        <key>EnvironmentVariables</key>
+        <dict>
+%s        </dict>
+        <key>WorkingDirectory</key>
+        <string>%s</string>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+        <key>StandardOutPath</key>
+        <string>%s</string>
+        <key>StandardErrorPath</key>
+        <string>%s</string>
+    </dict>
+</plist>`, label, flag, env, workingDir, logPath, logPath)
 }
 
 // installGuestAgent installs the Tart guest agent into a running VM over SSH, then
@@ -108,7 +135,7 @@ func (m *Manager) installGuestAgent(name string) {
 		m.broadcast()
 		return
 	}
-	_, password := effectiveSSHCredentials(cfg, &vmCopy)
+	guestUser, password := effectiveSSHCredentials(cfg, &vmCopy)
 	if strings.TrimSpace(password) == "" {
 		m.finishTask(t, errors.New("a guest SSH password is required to install the agent; set one in Configuration"))
 		m.broadcast()
@@ -119,7 +146,7 @@ func (m *Manager) installGuestAgent(name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
-	res := m.sshExecContext(ctx, name, guestAgentInstallScript(), password)
+	res := m.sshExecContext(ctx, name, guestAgentInstallScript(guestUser), password)
 	if out := strings.TrimSpace(res.Stdout); out != "" {
 		m.appendTaskOutput(t, out+"\n")
 	}

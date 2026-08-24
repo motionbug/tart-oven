@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestReleaseVersion138IsConsistent(t *testing.T) {
+func TestReleaseVersion139IsConsistent(t *testing.T) {
 	readme, err := os.ReadFile("README.md")
 	if err != nil {
 		t.Fatal(err)
@@ -16,23 +16,23 @@ func TestReleaseVersion138IsConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "1.38" {
+	if version != "1.39" {
 		t.Fatalf("version = %q", version)
 	}
-	if !strings.Contains(string(readme), "Current release: **1.38**") {
+	if !strings.Contains(string(readme), "Current release: **1.39**") {
 		t.Fatal("README release mismatch")
 	}
-	if !strings.Contains(string(changelog), "## 1.38") {
+	if !strings.Contains(string(changelog), "## 1.39") {
 		t.Fatal("CHANGELOG release missing")
 	}
 }
 
-func TestReleaseBinaryReportsVersion138(t *testing.T) {
+func TestReleaseBinaryReportsVersion139(t *testing.T) {
 	output, err := exec.Command("./tart-oven", "-version").CombinedOutput()
 	if err != nil {
 		t.Fatalf("run tracked executable: %v\n%s", err, output)
 	}
-	if got, want := string(output), "1.38\n"; got != want {
+	if got, want := string(output), "1.39\n"; got != want {
 		t.Fatalf("tracked executable version output = %q, want %q", got, want)
 	}
 }

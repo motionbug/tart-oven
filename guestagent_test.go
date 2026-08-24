@@ -12,7 +12,7 @@ import (
 // sudo in the install script would therefore hang waiting for a password that is
 // already consumed, so the single-invocation shape is an invariant, not a style.
 func TestInstallScriptUsesExactlyOneSudoInvocation(t *testing.T) {
-	rewritten := rewriteSudoForStdin(guestAgentInstallScript())
+	rewritten := rewriteSudoForStdin(guestAgentInstallScript("admin"))
 	if n := strings.Count(rewritten, "sudo -S -p ''"); n != 1 {
 		t.Fatalf("rewritten sudo count = %d, want exactly 1", n)
 	}
@@ -22,7 +22,7 @@ func TestInstallScriptUsesExactlyOneSudoInvocation(t *testing.T) {
 }
 
 func TestInstallScriptRefusesToRunHomebrewAsRoot(t *testing.T) {
-	script := guestAgentInstallScript()
+	script := guestAgentInstallScript("admin")
 	brew := strings.Index(script, "brew install")
 	sudo := strings.Index(script, "sudo ")
 	if brew < 0 || sudo < 0 {
@@ -33,29 +33,49 @@ func TestInstallScriptRefusesToRunHomebrewAsRoot(t *testing.T) {
 	}
 }
 
-func TestLaunchdPlistsTargetTheAgentBinaryAndFlags(t *testing.T) {
-	daemon := launchdPlist(guestAgentDaemonLabel, "--run-daemon", true)
-	agent := launchdPlist(guestAgentAgentLabel, "--run-agent", false)
+func TestLaunchdPlistsMatchTheUpstreamLayout(t *testing.T) {
+	daemon := launchdPlist(guestAgentDaemonLabel, "--run-daemon", "/var/empty", "/tmp/tart-guest-daemon.log", false)
+	agent := launchdPlist(guestAgentAgentLabel, "--run-agent", "/Users/admin", "/tmp/tart-guest-agent.log", true)
+
+	// Commands run through `tart exec` inherit the agent's environment, so PATH is
+	// load-bearing, not cosmetic. Verified against the plists the official Cirrus
+	// images actually ship.
 	for _, want := range []string{
 		"<string>" + guestAgentDaemonLabel + "</string>",
 		"/opt/homebrew/bin/tart-guest-agent",
 		"--run-daemon",
+		"<key>PATH</key>",
+		guestAgentPATH,
+		"<string>/var/empty</string>",
 		"<key>RunAtLoad</key>",
+		"<key>KeepAlive</key>",
+		"/tmp/tart-guest-daemon.log",
 	} {
 		if !strings.Contains(daemon, want) {
 			t.Errorf("daemon plist missing %q", want)
 		}
 	}
-	// --run-agent carries the RPC server that `tart exec` and the agent IP
-	// resolver depend on, so it must be the per-session job.
-	if !strings.Contains(agent, "--run-agent") {
-		t.Error("agent plist must request --run-agent")
+	for _, want := range []string{
+		"--run-agent",
+		"<key>PATH</key>",
+		guestAgentPATH,
+		"<key>TERM</key>",
+		"<string>/Users/admin</string>",
+		"/tmp/tart-guest-agent.log",
+	} {
+		if !strings.Contains(agent, want) {
+			t.Errorf("agent plist missing %q", want)
+		}
 	}
+	// The per-session agent must not inherit the root daemon's working directory.
 	if strings.Contains(agent, "/var/empty") {
-		t.Error("the per-session agent must not use the root daemon's working directory")
+		t.Error("agent plist must not use the root daemon working directory")
+	}
+	// TERM belongs only to the interactive per-session job.
+	if strings.Contains(daemon, "TERM") {
+		t.Error("daemon plist should not export TERM")
 	}
 }
-
 func TestLoadDefaultsSSHFallbackOnForUpgradesButPreservesExplicitFalse(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -91,5 +111,20 @@ func TestExecInGuestReportsWhenFallbackIsOffAndAgentIsAbsent(t *testing.T) {
 	}
 	if m.vms["vm1"].AgentOK {
 		t.Fatal("agentOk should be false when the agent did not answer")
+	}
+}
+
+// A non-interactive SSH session gets PATH=/usr/bin:/bin:/usr/sbin:/sbin, which
+// contains no Homebrew prefix. Verified against a real guest: without this export
+// the script reports "Homebrew is not installed" on a guest that has it.
+func TestInstallScriptRepairsPATHBeforeLookingForHomebrew(t *testing.T) {
+	script := guestAgentInstallScript("admin")
+	export := strings.Index(script, `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"`)
+	check := strings.Index(script, "command -v brew")
+	if export < 0 {
+		t.Fatal("script does not repair PATH for a non-interactive session")
+	}
+	if export > check {
+		t.Fatal("PATH must be repaired before the Homebrew check, or the check is meaningless")
 	}
 }

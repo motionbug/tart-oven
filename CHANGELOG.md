@@ -1,6 +1,7 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.38 makes the SSH
+This file records user-visible changes to Tart Oven. Version 1.39 fixes the guest
+agent installer against a real agentless VM. Version 1.38 makes the SSH
 fallback optional and adds a guest agent installer. Version 1.37 runs guest commands
 through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
 introduced one release earlier, and finishes removing Suspend. Version 1.36 moves the theme
@@ -13,6 +14,23 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.39 — 2026-08-24
+
+### Guest Agent Installer Fixes
+
+Validated end-to-end against a genuinely agentless VM, which surfaced two defects in
+the installer shipped in 1.38.
+
+- **The installer no longer reports "Homebrew is not installed" on guests that have
+  it**: a non-interactive SSH session gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, which
+  contains no Homebrew prefix, so the check failed on every real guest. The script now
+  repairs `PATH` before looking for `brew`.
+- **The installed launchd jobs now match the official images exactly**: the generated
+  property lists were missing `PATH`, the agent's `WorkingDirectory`, and the log
+  paths. `PATH` in particular is load-bearing — commands run through `tart exec`
+  inherit the agent's environment, so without it anything resolved by name could fail.
+  Verified byte-for-byte against the plists the Cirrus base images ship.
 
 ## 1.38 — 2026-08-24
 
