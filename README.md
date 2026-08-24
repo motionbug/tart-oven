@@ -118,22 +118,23 @@ To access the web dashboard from another Mac or PC on your local network:
 
 ## 7. Installation, Upgrades & Deployment
 
-### Quick Upgrade to 1.34
-Install the latest package from Terminal:
+### Install or Upgrade to 1.34
+Double-click `TartOven-1.34.pkg` or run from Terminal:
 
 ```sh
-sudo installer -pkg TartOven-1.34.pkg -target /
+sudo installer -pkg ~/Downloads/TartOven-1.34.pkg -target /
 ```
 
-This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing state in `~/.tart-oven/state.json`.
+This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing configuration in `~/.tart-oven/state.json`.
 
-### Building from Source
+### Building from Source & Packaging
 
 ```sh
-# Build standalone binary
+# 1. Build standalone binary
 go build -o tart-oven .
 
-# Build macOS installer package (.pkg)
+# 2. Build & sign macOS installer package (.pkg)
+# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.34.pkg
 ./packaging/build-pkg.sh
 ```
 

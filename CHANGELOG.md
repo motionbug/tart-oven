@@ -24,6 +24,10 @@ scheduling by default.
 - **Interactive Changelog Popup Modal**: Viewing the changelog in the web dashboard
   now opens a responsive, scrollable popup modal that renders `CHANGELOG.md` dynamically
   in-place without page reloads or 404 errors.
+- **Signed Installer Package (`~/Downloads`)**: `./packaging/build-pkg.sh` now
+  automatically detects installed Developer ID certificates in the macOS Keychain,
+  signs both the binary (Hardened Runtime) and installer package, and outputs the
+  artifact directly to `~/Downloads/TartOven-1.34.pkg` without cluttering the repo.
 
 ## 1.33 — 2026-08-24
 
