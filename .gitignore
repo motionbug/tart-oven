@@ -28,6 +28,8 @@ go.work.sum
 # Local agent/editor working files
 settings.local.json
 .claude/
+.vscode/
+.idea/
 
 # Package files
 *.pkg
@@ -39,5 +41,7 @@ settings.local.json
 # Agent & worktree directories
 .agents/
 .worktrees/
+.superpowers/
+docs/superpowers/
 node_modules/
 
