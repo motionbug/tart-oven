@@ -1057,3 +1057,342 @@ test("filterHelp toggles visibility for both h2 and child h3 links in helpToc", 
   assert.equal(linkH2Sec2.style.display, "");
   assert.equal(linkH3Sec2.style.display, "");
 });
+
+test("Onboarding wizard modal and empty dashboard hero exist in index.html", () => {
+  const requiredElements = [
+    'id="onboardingModal"',
+    'id="reopenWizardBtn"',
+    'id="emptyDashboardHero"',
+    'data-role="devops"',
+    'data-role="jamf"',
+    'data-role="qa"',
+    'id="wizardStep1"',
+    'id="wizardStep2"',
+    'id="wizardStep3"',
+    'id="wizardStep4"',
+    'id="wizardStep5"',
+  ];
+  for (const el of requiredElements) {
+    assert.ok(html.includes(el), `index.html missing element ${el}`);
+  }
+});
+
+function createMockClassList(initialClasses = []) {
+  const classes = new Set(initialClasses);
+  return {
+    classes,
+    add(c) { classes.add(c); },
+    remove(c) { classes.delete(c); },
+    contains(c) { return classes.has(c); },
+    toggle(c, force) {
+      if (force === undefined) {
+        if (classes.has(c)) { classes.delete(c); return false; }
+        else { classes.add(c); return true; }
+      } else if (force) {
+        classes.add(c); return true;
+      } else {
+        classes.delete(c); return false;
+      }
+    },
+  };
+}
+
+test("openOnboardingWizard and closeOnboardingWizard toggle modal and persist completion", async () => {
+  const modal = {
+    classList: createMockClassList(["hidden"]),
+  };
+
+  const steps = [1, 2, 3, 4, 5].map(i => ({
+    id: `wizardStep${i}`,
+    style: { display: i === 1 ? "block" : "none" },
+    classList: createMockClassList(),
+  }));
+
+  const indicators = [1, 2, 3, 4, 5].map(i => ({
+    dataset: { step: String(i) },
+    classList: createMockClassList(),
+  }));
+
+  const prevBtn = { style: {} };
+  const nextBtn = { style: {} };
+  const finishBtn = { style: {} };
+
+  let apiCalls = [];
+  const mockApi = (url, opts) => {
+    apiCalls.push({ url, opts });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+  };
+
+  const document = {
+    getElementById(id) {
+      if (id === "onboardingModal") return modal;
+      if (id === "wizardPrevBtn") return prevBtn;
+      if (id === "wizardNextBtn") return nextBtn;
+      if (id === "wizardFinishBtn") return finishBtn;
+      const stepMatch = id.match(/^wizardStep(\d)$/);
+      if (stepMatch) return steps[parseInt(stepMatch[1], 10) - 1];
+      return null;
+    },
+    querySelectorAll(sel) {
+      if (sel.includes("wizard-step-indicator") || sel.includes(".step-indicator")) return indicators;
+      return [];
+    },
+  };
+
+  let mockLatest = { config: { firstRunCompleted: false, listen: "127.0.0.1:9000" }, tartInstalled: true, tartVersion: "1.2.0", storagePath: "/tmp/vms" };
+
+  const context = vm.createContext({
+    document,
+    currentWizardStep: 1,
+    latest: mockLatest,
+    selectedWizardRole: "devops",
+    api: mockApi,
+  });
+  const definitions = ["updateWizardReview", "selectWizardStep", "openOnboardingWizard", "closeOnboardingWizard"].map(extractFunction).join("\n");
+  vm.runInContext(definitions + "; globalThis.bundle = { openOnboardingWizard, closeOnboardingWizard };", context);
+  const { openOnboardingWizard, closeOnboardingWizard } = context.bundle;
+
+  // Open wizard
+  openOnboardingWizard(1);
+  assert.equal(modal.classList.contains("hidden"), false);
+
+  // Close wizard without completion
+  await closeOnboardingWizard(false);
+  assert.equal(modal.classList.contains("hidden"), true);
+  assert.equal(apiCalls.length, 0);
+
+  // Close wizard with completion
+  await closeOnboardingWizard(true);
+  assert.equal(modal.classList.contains("hidden"), true);
+  assert.equal(apiCalls.length, 1);
+  assert.equal(apiCalls[0].url, "/api/config");
+  const payload = JSON.parse(apiCalls[0].opts.body);
+  assert.equal(payload.firstRunCompleted, true);
+  assert.equal(payload.operatorRole, "devops");
+});
+
+test("selectWizardStep, nextWizardStep, and prevWizardStep navigate through 5 steps", () => {
+  const steps = [1, 2, 3, 4, 5].map(i => ({
+    id: `wizardStep${i}`,
+    style: { display: "none" },
+    classList: createMockClassList(),
+  }));
+
+  const indicators = [1, 2, 3, 4, 5].map(i => ({
+    dataset: { step: String(i) },
+    classList: createMockClassList(),
+  }));
+
+  const prevBtn = { style: {} };
+  const nextBtn = { style: {} };
+  const finishBtn = { style: {} };
+
+  const document = {
+    getElementById(id) {
+      if (id === "wizardPrevBtn") return prevBtn;
+      if (id === "wizardNextBtn") return nextBtn;
+      if (id === "wizardFinishBtn") return finishBtn;
+      const stepMatch = id.match(/^wizardStep(\d)$/);
+      if (stepMatch) return steps[parseInt(stepMatch[1], 10) - 1];
+      return null;
+    },
+    querySelectorAll(sel) {
+      if (sel.includes("wizard-step-indicator") || sel.includes(".step-indicator")) return indicators;
+      return [];
+    },
+  };
+
+  const context = vm.createContext({
+    document,
+    currentWizardStep: 1,
+    latest: { config: {} },
+    selectedWizardRole: "devops",
+  });
+
+  const definitions = ["updateWizardReview", "selectWizardStep", "nextWizardStep", "prevWizardStep"].map(extractFunction).join("\n");
+  vm.runInContext(definitions + "; globalThis.bundle = { selectWizardStep, nextWizardStep, prevWizardStep };", context);
+  const { selectWizardStep, nextWizardStep, prevWizardStep } = context.bundle;
+
+  selectWizardStep(1);
+  assert.equal(steps[0].style.display, "block");
+  assert.equal(steps[1].style.display, "none");
+  assert.equal(prevBtn.style.display, "none");
+  assert.equal(nextBtn.style.display, "");
+
+  nextWizardStep();
+  assert.equal(steps[1].style.display, "block");
+  assert.equal(steps[0].style.display, "none");
+  assert.equal(prevBtn.style.display, "");
+
+  prevWizardStep();
+  assert.equal(steps[0].style.display, "block");
+  assert.equal(steps[1].style.display, "none");
+
+  // Step 5 display checks
+  selectWizardStep(5);
+  assert.equal(steps[4].style.display, "block");
+  assert.equal(nextBtn.style.display, "none");
+  assert.equal(finishBtn.style.display, "");
+});
+
+test("applyRolePreset configures recommended settings for DevOps, Jamf, and QA", () => {
+  const elements = {
+    noGraphics: { checked: false },
+    noAudio: { checked: false },
+    schedulerMode: { value: "random" },
+    createRandSerial: { checked: false },
+    createRandMac: { checked: false },
+    editRandSerial: { checked: false },
+    editRandMac: { checked: false },
+    wizardReviewRole: { textContent: "" },
+    wizardReviewGraphics: { textContent: "" },
+    wizardReviewScheduler: { textContent: "" },
+    wizardReviewStorage: { textContent: "" },
+  };
+
+  const roleCards = [
+    {
+      dataset: { role: "devops" },
+      classList: createMockClassList(),
+    },
+    {
+      dataset: { role: "jamf" },
+      classList: createMockClassList(),
+    },
+    {
+      dataset: { role: "qa" },
+      classList: createMockClassList(),
+    },
+  ];
+
+  let cmdTab = "ssh";
+
+  const document = {
+    getElementById(id) { return elements[id] || null; },
+    querySelectorAll(sel) {
+      if (sel.includes("[data-role]") || sel.includes(".role-card")) return roleCards;
+      return [];
+    },
+  };
+
+  const globals = {
+    document,
+    switchCmdTab(tab) { cmdTab = tab; },
+    selectedWizardRole: "",
+    latest: { config: {}, storagePath: "/Users/test/.tart/vms" },
+  };
+
+  const applyRolePreset = evaluateFunctions(
+    ["updateWizardReview", "applyRolePreset"],
+    "applyRolePreset",
+    globals
+  );
+
+  // Apply DevOps preset
+  applyRolePreset("devops");
+  assert.equal(elements.noGraphics.checked, true);
+  assert.equal(elements.noAudio.checked, true);
+  assert.equal(elements.schedulerMode.value, "sequential");
+  assert.equal(roleCards[0].classList.contains("active"), true);
+  assert.equal(roleCards[1].classList.contains("active"), false);
+
+  // Apply Jamf preset
+  applyRolePreset("jamf");
+  assert.equal(elements.createRandSerial.checked, true);
+  assert.equal(elements.createRandMac.checked, true);
+  assert.equal(elements.editRandSerial.checked, true);
+  assert.equal(elements.editRandMac.checked, true);
+  assert.equal(cmdTab, "jamf");
+  assert.equal(roleCards[1].classList.contains("active"), true);
+  assert.equal(roleCards[0].classList.contains("active"), false);
+
+  // Apply QA preset
+  applyRolePreset("qa");
+  assert.equal(elements.noGraphics.checked, false);
+  assert.equal(elements.noAudio.checked, false);
+  assert.equal(roleCards[2].classList.contains("active"), true);
+  assert.equal(roleCards[1].classList.contains("active"), false);
+});
+
+test("renderTable toggles emptyDashboardHero visibility based on local VM count", () => {
+  const hero = { style: { display: "none" } };
+  const tbody = { innerHTML: "", querySelectorAll: () => [] };
+  const ociTbody = { innerHTML: "", querySelectorAll: () => [] };
+  const ociPanel = { classList: createMockClassList() };
+
+  const document = {
+    getElementById(id) {
+      if (id === "emptyDashboardHero") return hero;
+      if (id === "localVmRows") return tbody;
+      if (id === "ociImageRows") return ociTbody;
+      if (id === "ociPanel") return ociPanel;
+      if (id === "showRunningOnly") return { checked: false };
+      if (id === "vmSearch") return { value: "" };
+      return null;
+    },
+  };
+
+  const renderTable = evaluateFunctions(
+    ["isOCI", "renderOCIImages", "renderTable"],
+    "renderTable",
+    {
+      document,
+      esc: (s) => s,
+      fmtAgo: () => "",
+      fmtDateTime: () => "",
+      fmtRemaining: () => "",
+      tagsHtml: () => "",
+      sshCell: () => "",
+      infoCell: () => "",
+      mdmCell: () => "",
+      agentInstallButton: () => "",
+      latest: { config: {} },
+    }
+  );
+
+  // When only OCI images exist (0 local VMs), empty hero card is displayed
+  renderTable([{ name: "sequoia-base", source: "oci" }]);
+  assert.equal(hero.style.display, "block");
+
+  // When a local VM exists, empty hero card is hidden
+  renderTable([{ name: "sequoia-clone-1", source: "local", state: "stopped" }]);
+  assert.equal(hero.style.display, "none");
+});
+
+test("Auto-open wizard triggers when firstRunCompleted is false and local VM count is 0", () => {
+  let openedStep = null;
+  let wizardAutoOpened = false;
+
+  const checkAutoOpen = (state) => {
+    if (!wizardAutoOpened && state && state.config && !state.config.firstRunCompleted && Array.isArray(state.vms) && state.vms.filter(v => v.source !== "oci").length === 0) {
+      wizardAutoOpened = true;
+      openedStep = 1;
+    }
+  };
+
+  // First run with no local VMs -> should open
+  checkAutoOpen({
+    config: { firstRunCompleted: false },
+    vms: [{ name: "tahoe-base", source: "oci" }],
+  });
+  assert.equal(openedStep, 1);
+  assert.equal(wizardAutoOpened, true);
+
+  // Subsequent call should not re-trigger
+  openedStep = null;
+  checkAutoOpen({
+    config: { firstRunCompleted: false },
+    vms: [],
+  });
+  assert.equal(openedStep, null);
+
+  // Config with firstRunCompleted: true -> should not open
+  wizardAutoOpened = false;
+  openedStep = null;
+  checkAutoOpen({
+    config: { firstRunCompleted: true },
+    vms: [],
+  });
+  assert.equal(openedStep, null);
+  assert.equal(wizardAutoOpened, false);
+});

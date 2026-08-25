@@ -581,6 +581,10 @@
   .modal-content h3 { margin: 0 0 16px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
   .modal-content textarea { width: 100%; resize: vertical; min-height: 100px; }
   .modal-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+  .role-card { transition: border-color 0.15s, background 0.15s; }
+  .role-card:hover { border-color: var(--accent) !important; }
+  .role-card.active { border-color: var(--accent) !important; background: rgba(79, 140, 255, 0.08) !important; }
+  .wizard-step-indicator.active { border-bottom-color: var(--accent) !important; color: var(--text) !important; }
 </style>
 </head>
 <body>
@@ -592,6 +596,7 @@
     <div class="stat"><span class="stat-label">RAM</span><span id="statRam" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">Pressure</span><span id="statPressure" class="stat-val">—</span></div>
     <div class="meta" id="hmeta">connecting…</div>
+    <button id="reopenWizardBtn" class="ghost" type="button" onclick="openOnboardingWizard()" title="Launch setup wizard" style="font-size:12px;padding:4px 10px;">🚀 Setup Wizard</button>
     <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to light mode">🌙</button>
   </div>
 </header>
@@ -617,6 +622,19 @@
     <div class="scheduler-row">
       <button id="pauseBtn" class="big">…</button>
       <button id="refreshBtn" class="ghost" title="Re-check all VMs against Tart and clear stuck statuses">⟳ Refresh</button>
+    </div>
+
+    <div id="emptyDashboardHero" class="panel hero-card" style="display: none; border: 1px dashed var(--accent); background: rgba(79, 140, 255, 0.05); padding: 28px; text-align: center; margin-bottom: 20px; border-radius: 8px;">
+      <div style="font-size: 36px; margin-bottom: 10px;">🚀</div>
+      <h2 style="margin: 0 0 8px; font-size: 20px; font-weight: 600;">Welcome to Tart Oven!</h2>
+      <p class="muted" style="max-width: 600px; margin: 0 auto 20px; font-size: 14px; line-height: 1.5;">
+        You don't have any local virtual machines configured yet. Get started by stepping through the onboarding wizard or pulling a base macOS image from the registry.
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+        <button type="button" class="big" onclick="openOnboardingWizard(1)" style="padding: 8px 18px;">🚀 Open Setup Wizard</button>
+        <button type="button" class="ghost big" onclick="openPullOciModal()" style="padding: 8px 18px;">⇩ Pull Base Image</button>
+        <button type="button" class="ghost big" onclick="showTab('guide')" style="padding: 8px 18px;">📖 Helper Guide</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -968,6 +986,14 @@
       </div>
     </div>
 
+    <div class="panel">
+      <h2>🚀 Setup Wizard</h2>
+      <p class="muted">Re-run the interactive first-run onboarding wizard to check environment status, configure base images, or apply role presets.</p>
+      <div class="actions">
+        <button type="button" class="ghost" onclick="openOnboardingWizard()">🚀 Launch Setup Wizard</button>
+      </div>
+    </div>
+
     <div class="actions" style="margin-bottom: 18px;">
       <button id="saveBtn">Save configuration</button>
       <span id="cfgStatus" class="muted"></span>
@@ -1084,6 +1110,192 @@
     <div class="modal-actions" style="margin-top: 20px;">
       <button type="button" id="pullOciCancel" class="ghost" onclick="closePullOciModal()">Close</button>
       <button type="button" id="pullOciSubmit" onclick="submitOciPull()">Pull Image</button>
+    </div>
+  </div>
+</div>
+
+<!-- First-Run Onboarding Wizard Modal -->
+<div id="onboardingModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="wizardTitle">
+  <div class="modal-backdrop" onclick="closeOnboardingWizard(false)"></div>
+  <div class="modal-content" style="width: 720px; max-width: 94vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; padding: 0;">
+    <!-- Wizard Header with Stepper Progress -->
+    <div style="padding: 20px 24px 16px; border-bottom: 1px solid var(--border); background: var(--panel2);">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+        <h3 id="wizardTitle" style="margin: 0; font-size: 18px; font-weight: 600;">🚀 First-Run Setup Wizard</h3>
+        <button type="button" class="ghost" onclick="closeOnboardingWizard(false)" style="padding: 4px 10px; font-size: 16px; line-height: 1;" title="Close">✕</button>
+      </div>
+      <div class="stepper" style="display: flex; justify-content: space-between; gap: 8px; position: relative;">
+        <div class="wizard-step-indicator step-indicator active" data-step="1" onclick="selectWizardStep(1)" style="flex: 1; text-align: center; cursor: pointer; padding: 6px 4px; border-bottom: 3px solid var(--accent); font-size: 12px; font-weight: 600;">
+          1. Environment
+        </div>
+        <div class="wizard-step-indicator step-indicator" data-step="2" onclick="selectWizardStep(2)" style="flex: 1; text-align: center; cursor: pointer; padding: 6px 4px; border-bottom: 3px solid var(--border); font-size: 12px; color: var(--muted); font-weight: 600;">
+          2. Storage &amp; Net
+        </div>
+        <div class="wizard-step-indicator step-indicator" data-step="3" onclick="selectWizardStep(3)" style="flex: 1; text-align: center; cursor: pointer; padding: 6px 4px; border-bottom: 3px solid var(--border); font-size: 12px; color: var(--muted); font-weight: 600;">
+          3. Base Image
+        </div>
+        <div class="wizard-step-indicator step-indicator" data-step="4" onclick="selectWizardStep(4)" style="flex: 1; text-align: center; cursor: pointer; padding: 6px 4px; border-bottom: 3px solid var(--border); font-size: 12px; color: var(--muted); font-weight: 600;">
+          4. Operator Role
+        </div>
+        <div class="wizard-step-indicator step-indicator" data-step="5" onclick="selectWizardStep(5)" style="flex: 1; text-align: center; cursor: pointer; padding: 6px 4px; border-bottom: 3px solid var(--border); font-size: 12px; color: var(--muted); font-weight: 600;">
+          5. Review &amp; Launch
+        </div>
+      </div>
+    </div>
+
+    <!-- Wizard Body (Scrollable) -->
+    <div style="padding: 24px; overflow-y: auto; flex: 1;">
+      <!-- STEP 1: Welcome & Tart Check -->
+      <div id="wizardStep1" class="wizard-step">
+        <h4 style="margin: 0 0 10px; font-size: 16px;">Step 1: Host &amp; Tart CLI Environment</h4>
+        <p class="muted" style="margin-bottom: 18px; font-size: 13.5px;">Tart Oven runs native macOS and Linux guests on Apple Silicon using Apple's Virtualization.framework and the Tart hypervisor.</p>
+        <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div>
+              <div style="font-weight: 600; font-size: 14px;">Apple Silicon Architecture (ARM64)</div>
+              <div class="muted" style="font-size: 12.5px;">Virtualization.framework requires Apple Silicon (M1/M2/M3/M4)</div>
+            </div>
+            <span class="badge ok" style="background: rgba(46, 204, 113, 0.15); color: var(--green); padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px;">✓ Verified (arm64)</span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div>
+              <div style="font-weight: 600; font-size: 14px;">Tart CLI Binary</div>
+              <div id="wizardTartStatus" class="muted" style="font-size: 12.5px;">Checking Tart installation…</div>
+            </div>
+            <button type="button" id="wizardInstallTartBtn" class="ghost" onclick="document.getElementById('installTartBtn').click()" style="display: none; font-size: 12px;">Install Tart CLI</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2: Storage & Networking Confirmation -->
+      <div id="wizardStep2" class="wizard-step" style="display: none;">
+        <h4 style="margin: 0 0 10px; font-size: 16px;">Step 2: APFS Storage &amp; Network Configuration</h4>
+        <p class="muted" style="margin-bottom: 18px; font-size: 13.5px;">Tart relies on APFS Copy-on-Write (CoW) clones for instant disk cloning and VM execution.</p>
+        <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+          <div style="margin-bottom: 12px;">
+            <label style="font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: uppercase;">VM Storage Directory (TART_HOME)</label>
+            <div id="wizardStoragePath" class="mono" style="font-size: 13px; margin-top: 4px; color: var(--text);">~/.tart/vms</div>
+            <div id="wizardStorageStatus" style="font-size: 12px; color: var(--green); margin-top: 2px;">✓ APFS Volume Mounted</div>
+          </div>
+          <div style="padding-top: 12px; border-top: 1px solid var(--border);">
+            <label style="font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: uppercase;">Server LAN &amp; Bridge Interface</label>
+            <div id="wizardListenAddr" class="mono" style="font-size: 13px; margin-top: 4px; color: var(--text);">http://127.0.0.1:9000</div>
+            <div class="muted" style="font-size: 12px; margin-top: 2px;">Bridged networking assigns native LAN IP addresses to guest VMs via DHCP.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3: Base Image Selection -->
+      <div id="wizardStep3" class="wizard-step" style="display: none;">
+        <h4 style="margin: 0 0 10px; font-size: 16px;">Step 3: Choose Base macOS Image</h4>
+        <p class="muted" style="margin-bottom: 16px; font-size: 13.5px;">Select a pre-built base image to pull from Cirrus Labs registry, or provide a custom OCI image tag.</p>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px;">
+          <div class="image-preset-card" style="border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; background: var(--bg);" onclick="selectWizardBaseImage('ghcr.io/cirruslabs/macos-tahoe-base:latest')">
+            <div style="font-size: 20px; margin-bottom: 4px;">🍏</div>
+            <div style="font-weight: 600; font-size: 14px;">macOS 26 (Tahoe)</div>
+            <div class="muted" style="font-size: 12px;">Base developer image</div>
+          </div>
+          <div class="image-preset-card" style="border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; background: var(--bg);" onclick="selectWizardBaseImage('ghcr.io/cirruslabs/macos-sequoia-base:latest')">
+            <div style="font-size: 20px; margin-bottom: 4px;">🍏</div>
+            <div style="font-weight: 600; font-size: 14px;">macOS 15 (Sequoia)</div>
+            <div class="muted" style="font-size: 12px;">Standard macOS production base</div>
+          </div>
+          <div class="image-preset-card" style="border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; background: var(--bg);" onclick="selectWizardBaseImage('ghcr.io/cirruslabs/macos-sonoma-base:latest')">
+            <div style="font-size: 20px; margin-bottom: 4px;">🍏</div>
+            <div style="font-weight: 600; font-size: 14px;">macOS 14 (Sonoma)</div>
+            <div class="muted" style="font-size: 12px;">Legacy support image</div>
+          </div>
+        </div>
+        <div class="field" style="margin-bottom: 12px;">
+          <label for="wizardOciImage" style="font-size: 13px; font-weight: 600;">Selected Image Registry Reference</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="wizardOciImage" class="mono" style="flex: 1;" value="ghcr.io/cirruslabs/macos-sequoia-base:latest">
+            <button type="button" class="ghost" onclick="startWizardPull()">⇩ Pull Image</button>
+          </div>
+        </div>
+        <div id="wizardPullStatus" class="muted" style="font-size: 12px;"></div>
+      </div>
+
+      <!-- STEP 4: Operator Role Presets -->
+      <div id="wizardStep4" class="wizard-step" style="display: none;">
+        <h4 style="margin: 0 0 10px; font-size: 16px;">Step 4: Select Operator Role Preset</h4>
+        <p class="muted" style="margin-bottom: 16px; font-size: 13.5px;">Choose your primary workflow. Tart Oven will configure scheduler, display, and MDM defaults accordingly.</p>
+        
+        <div style="display: grid; grid-template-columns: 1fr; gap: 12px;">
+          <!-- DevOps Card -->
+          <div class="role-card active" data-role="devops" onclick="applyRolePreset('devops')" style="border: 2px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; background: var(--bg);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="font-weight: 600; font-size: 15px;">🛠️ DevOps / CI Automation</div>
+              <span class="role-badge" style="font-size: 12px; font-weight: 600; color: var(--accent);">Headless &amp; Sequential</span>
+            </div>
+            <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.4;">
+              Optimized for CI runners and automated build pipelines. Enables headless mode (<span class="mono">--no-graphics</span>), disables host audio (<span class="mono">--no-audio</span>), and sets sequential scheduling.
+            </p>
+          </div>
+
+          <!-- Jamf Card -->
+          <div class="role-card" data-role="jamf" onclick="applyRolePreset('jamf')" style="border: 2px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; background: var(--bg);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="font-weight: 600; font-size: 15px;">🍏 Jamf / Mac Admin</div>
+              <span class="role-badge" style="font-size: 12px; font-weight: 600; color: var(--accent);">MDM &amp; Unique Hardware</span>
+            </div>
+            <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.4;">
+              Tailored for fleet testing and Jamf Pro enrollment. Enables unique random hardware serials &amp; MAC addresses on clone, activates MDM enrollment monitoring, and presets Jamf recon commands.
+            </p>
+          </div>
+
+          <!-- QA Card -->
+          <div class="role-card" data-role="qa" onclick="applyRolePreset('qa')" style="border: 2px solid var(--border); border-radius: 8px; padding: 16px; cursor: pointer; background: var(--bg);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="font-weight: 600; font-size: 15px;">🧪 QA / Interactive Tester</div>
+              <span class="role-badge" style="font-size: 12px; font-weight: 600; color: var(--accent);">Full GUI &amp; Audio</span>
+            </div>
+            <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.4;">
+              Ideal for interactive testing, UI validation, and screen sharing. Enables full graphical windows and host audio pass-through.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 5: Review & Launch -->
+      <div id="wizardStep5" class="wizard-step" style="display: none;">
+        <h4 style="margin: 0 0 10px; font-size: 16px;">Step 5: Review Configuration &amp; Launch Fleet</h4>
+        <p class="muted" style="margin-bottom: 16px; font-size: 13.5px;">Your environment is ready. Click below to provision your first virtual machine or jump into the dashboard.</p>
+        
+        <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted" style="font-size: 13px;">Selected Role:</span>
+            <span id="wizardReviewRole" style="font-weight: 600; font-size: 13px;">🛠️ DevOps / CI</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted" style="font-size: 13px;">Storage Path:</span>
+            <span id="wizardReviewStorage" class="mono" style="font-size: 13px;">~/.tart/vms</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span class="muted" style="font-size: 13px;">Graphics Mode:</span>
+            <span id="wizardReviewGraphics" style="font-size: 13px;">Headless (--no-graphics)</span>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span class="muted" style="font-size: 13px;">Scheduler Mode:</span>
+            <span id="wizardReviewScheduler" style="font-size: 13px;">Sequential (A→Z)</span>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <button type="button" class="big" onclick="wizardLaunch('vmm')" style="padding: 10px 20px;">➕ Clone First VM</button>
+          <button type="button" class="ghost big" onclick="wizardLaunch('dashboard')" style="padding: 10px 20px;">🖥 Go to Fleet Dashboard</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wizard Footer Navigation -->
+    <div class="modal-actions" style="padding: 14px 24px; border-top: 1px solid var(--border); margin: 0; background: var(--panel2); justify-content: space-between;">
+      <button type="button" id="wizardPrevBtn" class="ghost" onclick="prevWizardStep()" style="display: none;">◀ Previous</button>
+      <div style="margin-left: auto; display: flex; gap: 10px;">
+        <button type="button" class="ghost" onclick="closeOnboardingWizard(false)">Skip</button>
+        <button type="button" id="wizardNextBtn" onclick="nextWizardStep()">Next ▶</button>
+        <button type="button" id="wizardFinishBtn" onclick="closeOnboardingWizard(true)" style="display: none;">Complete Setup ✓</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1986,6 +2198,11 @@ function render(state) {
   renderLogs(state.logs || []);
   checkErrors(state.vms);
 
+  if (!wizardAutoOpened && state && state.config && !state.config.firstRunCompleted && Array.isArray(state.vms) && state.vms.filter(v => !isOCI(v.source)).length === 0) {
+    wizardAutoOpened = true;
+    openOnboardingWizard(1);
+  }
+
   if (activeTab === "logs") scheduleHistory();
   // The server produces one sample a minute; SSE pushes arrive far more often. Only
   // refetch the history when there is genuinely a new sample to draw.
@@ -2007,6 +2224,187 @@ function cloneFromOCI(name) {
   const cloneSource = document.getElementById("cloneSource");
   cloneSource.value = name;
   cloneSource.focus();
+}
+
+// ---- Onboarding Wizard ----
+let currentWizardStep = 1;
+let selectedWizardRole = "devops";
+let wizardAutoOpened = false;
+
+function openOnboardingWizard(step) {
+  if (step === undefined) step = 1;
+  const modal = document.getElementById("onboardingModal");
+  if (modal) modal.classList.remove("hidden");
+  if (typeof latest !== "undefined" && latest) {
+    const tartStatus = document.getElementById("wizardTartStatus");
+    const tartInstallBtn = document.getElementById("wizardInstallTartBtn");
+    if (tartStatus) {
+      if (latest.tartInstalled) {
+        tartStatus.textContent = "✓ Tart CLI installed (" + (latest.tartVersion || "available") + ")";
+        tartStatus.style.color = "var(--green)";
+        if (tartInstallBtn) tartInstallBtn.style.display = "none";
+      } else {
+        tartStatus.textContent = "⚠ Tart CLI not found in /Applications or PATH.";
+        tartStatus.style.color = "var(--amber)";
+        if (tartInstallBtn) tartInstallBtn.style.display = "";
+      }
+    }
+    const storagePath = document.getElementById("wizardStoragePath");
+    if (storagePath && latest.storagePath) storagePath.textContent = latest.storagePath;
+    const listenAddr = document.getElementById("wizardListenAddr");
+    if (listenAddr && latest.config && latest.config.listen) listenAddr.textContent = "http://" + latest.config.listen;
+  }
+  selectWizardStep(step);
+}
+
+async function closeOnboardingWizard(markComplete) {
+  const modal = document.getElementById("onboardingModal");
+  if (modal) modal.classList.add("hidden");
+  if (markComplete) {
+    try {
+      if (typeof latest !== "undefined" && latest && latest.config) {
+        latest.config.firstRunCompleted = true;
+      }
+      await api("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstRunCompleted: true, operatorRole: selectedWizardRole })
+      });
+    } catch (err) {
+      console.error("Failed to persist firstRunCompleted:", err);
+    }
+  }
+}
+
+function selectWizardStep(step) {
+  currentWizardStep = Math.max(1, Math.min(5, Number(step) || 1));
+  for (let i = 1; i <= 5; i++) {
+    const stepEl = document.getElementById("wizardStep" + i);
+    if (stepEl) {
+      stepEl.style.display = (i === currentWizardStep) ? "block" : "none";
+    }
+  }
+  document.querySelectorAll(".wizard-step-indicator, .step-indicator").forEach(ind => {
+    const s = parseInt(ind.dataset && ind.dataset.step, 10);
+    ind.classList.toggle("active", s === currentWizardStep);
+  });
+  const prevBtn = document.getElementById("wizardPrevBtn");
+  const nextBtn = document.getElementById("wizardNextBtn");
+  const finishBtn = document.getElementById("wizardFinishBtn");
+  if (prevBtn) prevBtn.style.display = currentWizardStep > 1 ? "" : "none";
+  if (nextBtn) nextBtn.style.display = currentWizardStep < 5 ? "" : "none";
+  if (finishBtn) finishBtn.style.display = currentWizardStep === 5 ? "" : "none";
+
+  if (currentWizardStep === 5) {
+    updateWizardReview();
+  }
+}
+
+function nextWizardStep() {
+  if (currentWizardStep < 5) {
+    selectWizardStep(currentWizardStep + 1);
+  }
+}
+
+function prevWizardStep() {
+  if (currentWizardStep > 1) {
+    selectWizardStep(currentWizardStep - 1);
+  }
+}
+
+function applyRolePreset(role) {
+  selectedWizardRole = role;
+  document.querySelectorAll("[data-role], .role-card").forEach(card => {
+    card.classList.toggle("active", card.dataset && card.dataset.role === role);
+  });
+
+  if (role === "devops") {
+    const ng = document.getElementById("noGraphics");
+    if (ng) ng.checked = true;
+    const na = document.getElementById("noAudio");
+    if (na) na.checked = true;
+    const sm = document.getElementById("schedulerMode");
+    if (sm) sm.value = "sequential";
+  } else if (role === "jamf") {
+    const crs = document.getElementById("createRandSerial");
+    if (crs) crs.checked = true;
+    const crm = document.getElementById("createRandMac");
+    if (crm) crm.checked = true;
+    const ers = document.getElementById("editRandSerial");
+    if (ers) ers.checked = true;
+    const erm = document.getElementById("editRandMac");
+    if (erm) erm.checked = true;
+    if (typeof switchCmdTab === "function") switchCmdTab("jamf");
+  } else if (role === "qa") {
+    const ng = document.getElementById("noGraphics");
+    if (ng) ng.checked = false;
+    const na = document.getElementById("noAudio");
+    if (na) na.checked = false;
+  }
+  updateWizardReview();
+}
+
+function selectWizardBaseImage(url) {
+  const input = document.getElementById("wizardOciImage");
+  if (input) input.value = url;
+}
+
+async function startWizardPull() {
+  const input = document.getElementById("wizardOciImage");
+  const image = (input ? input.value : "").trim();
+  const statusEl = document.getElementById("wizardPullStatus");
+  if (!image) return;
+  if (statusEl) statusEl.textContent = "Initiating background pull for " + image + "…";
+  try {
+    const res = await api("/api/oci/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, insecure: false })
+    });
+    if (res.ok) {
+      if (statusEl) {
+        statusEl.style.color = "var(--green)";
+        statusEl.textContent = "✓ Image pull started in background. Monitor progress in Activity.";
+      }
+    } else {
+      if (statusEl) {
+        statusEl.style.color = "var(--red)";
+        statusEl.textContent = "Pull request error (HTTP " + res.status + ")";
+      }
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.style.color = "var(--red)";
+      statusEl.textContent = "Error: " + err.message;
+    }
+  }
+}
+
+function updateWizardReview() {
+  const roleEl = document.getElementById("wizardReviewRole");
+  if (roleEl) {
+    const titles = { devops: "🛠️ DevOps / CI", jamf: "🍏 Jamf / Mac Admin", qa: "🧪 QA / Interactive Tester" };
+    roleEl.textContent = titles[selectedWizardRole] || selectedWizardRole;
+  }
+  const ng = document.getElementById("noGraphics");
+  const gEl = document.getElementById("wizardReviewGraphics");
+  if (gEl && ng) {
+    gEl.textContent = ng.checked ? "Headless (--no-graphics)" : "GUI Enabled";
+  }
+  const sm = document.getElementById("schedulerMode");
+  const sEl = document.getElementById("wizardReviewScheduler");
+  if (sEl && sm) {
+    sEl.textContent = sm.value === "sequential" ? "Sequential (A→Z)" : "Random";
+  }
+  const storageEl = document.getElementById("wizardReviewStorage");
+  if (storageEl && typeof latest !== "undefined" && latest && latest.storagePath) {
+    storageEl.textContent = latest.storagePath;
+  }
+}
+
+function wizardLaunch(tab) {
+  closeOnboardingWizard(true);
+  if (typeof showTab === "function") showTab(tab);
 }
 
 function openPullOciModal() {
@@ -2083,7 +2481,7 @@ async function submitOciPull() {
 function renderOCIImages(images, runningOnly, query) {
   const ociPanel = document.getElementById("ociPanel");
   const tbody = document.getElementById("ociImageRows");
-  ociPanel.classList.toggle("hidden", runningOnly);
+  if (ociPanel) ociPanel.classList.toggle("hidden", runningOnly);
   if (runningOnly) return;
   let filtered = images;
   if (query) filtered = filtered.filter(vm => vm.name.toLowerCase().includes(query));
@@ -2113,6 +2511,10 @@ function renderTable(vms) {
   const local = vms.filter(v => !isOCI(v.source));
   const images = vms.filter(v => isOCI(v.source));
   renderOCIImages(images, runningOnly, query);
+  const emptyHero = document.getElementById("emptyDashboardHero");
+  if (emptyHero) {
+    emptyHero.style.display = (local.length === 0) ? "block" : "none";
+  }
   let filtered = local;
   if (runningOnly) {
     filtered = filtered.filter(v => v.state === "running" || v.state === "starting" || v.state === "stopping");
@@ -3149,6 +3551,7 @@ document.addEventListener("keydown", (e) => {
     closeChangelogModal();
     closeEditModal();
     closePullOciModal();
+    closeOnboardingWizard(false);
   }
 });
 
