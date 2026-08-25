@@ -219,6 +219,20 @@
   .tab.active { display: block; animation: fadeIn 0.15s ease; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+  /* subtabs / segmented controls */
+  .segmented-control { display: inline-flex; align-items: center; gap: 2px; background: var(--panel2); padding: 3px; border-radius: 6px; border: 1px solid var(--border); }
+  .subtab-btn {
+    background: transparent; border: 1px solid transparent; color: var(--muted); cursor: pointer;
+    padding: 5px 12px; font: inherit; font-size: 12.5px; font-weight: 500; border-radius: 4px;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1); user-select: none;
+  }
+  .subtab-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
+  [data-theme="light"] .subtab-btn:hover { background: rgba(0, 0, 0, 0.04); }
+  .subtab-btn.active {
+    background: var(--panel); color: var(--text); font-weight: 600; border-color: var(--border);
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  }
+
   .panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     padding: 20px 22px; margin-bottom: 22px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
@@ -493,11 +507,11 @@
     </div>
 
     <div class="panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
         <h2 style="margin:0">Guest Commands</h2>
-        <div class="tabs" style="margin-bottom:0">
-          <button class="tabbtn active" type="button" id="cmdTabSshBtn" onclick="switchCmdTab('ssh')">SSH &amp; Shell</button>
-          <button class="tabbtn" type="button" id="cmdTabJamfBtn" onclick="switchCmdTab('jamf')">Jamf Commands</button>
+        <div class="segmented-control">
+          <button type="button" class="subtab-btn active" id="cmdTabSshBtn" onclick="switchCmdTab('ssh')">SSH &amp; Shell</button>
+          <button type="button" class="subtab-btn" id="cmdTabJamfBtn" onclick="switchCmdTab('jamf')">Jamf Commands</button>
         </div>
       </div>
 
@@ -946,12 +960,12 @@ function connect() {
 function showTab(id) {
   activeTab = id;
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + id));
-  document.querySelectorAll(".tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll("nav.tabs .tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
   if (id === "logs") loadHistory();
   if (id === "guide") loadReadme();
   if (id === "performance") loadPerformance();
 }
-document.querySelectorAll(".tabbtn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+document.querySelectorAll("nav.tabs .tabbtn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 // ---- performance ----
 function formatBytes(value) {
