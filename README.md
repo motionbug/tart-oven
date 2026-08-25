@@ -264,14 +264,19 @@ When host physical memory is exhausted and macOS triggers **Critical** memory pr
 4. **Auto-Recovery**: As soon as memory pressure subsides to Warning or Normal, the launch gate re-opens automatically.
 5. **Memory Scavenging**: Periodically invokes Go runtime memory scavenging (`debug.FreeOSMemory()`) to return unused runtime heap pages back to macOS.
 
-### Hardware Tuning Guidelines for Apple Silicon
+### Hardware Tuning & Virtualization Constraints
 
-| Host Hardware | Max Recommended Concurrent macOS VMs | RAM Allocation per Guest | CPU Allocation per Guest |
-|---|---|---|---|
-| **Apple M1 / M2 / M3 (16 GB)** | 1 - 2 VMs | 4 GB - 6 GB | 2 - 4 vCPUs |
-| **Apple M1 / M2 / M3 Pro (32 GB)** | 2 - 4 VMs | 6 GB - 8 GB | 4 vCPUs |
-| **Apple M1 / M2 / M3 / M4 Max (64-128 GB)** | 4 - 8 VMs | 8 GB - 16 GB | 4 - 6 vCPUs |
-| **Apple M1 / M2 / M3 Ultra (128-192 GB)** | 8 - 16 VMs | 8 GB - 16 GB | 4 - 8 vCPUs |
+Apple's native `Virtualization.framework` enforces a hard architectural limit of **at most 2 concurrent macOS virtual machines** simultaneously on a single macOS host, regardless of host chip tier (M1, M2, M3, M4, Max, or Ultra).
+
+#### System Requirements
+- **Host Processor**: Apple Silicon (M1 or newer)
+- **Host Memory**: Minimum 8 GB Unified Memory (16 GB+ recommended for running 2 concurrent VMs smoothly)
+- **Disk Storage**: APFS-formatted SSD volume with at least 25–50 GB free space for base images and copy-on-write clones
+- **Max Concurrent macOS Guests**: **2 VMs simultaneously** (enforced by Apple `Virtualization.framework`)
+
+#### Recommended Guest Sizing
+- **Single Active Guest**: 4–8 vCPUs, 4–8 GB RAM
+- **Two Concurrent Guests**: 2–4 vCPUs, 4–6 GB RAM per guest
 
 ---
 
