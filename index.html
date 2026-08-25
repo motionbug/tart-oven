@@ -904,11 +904,11 @@
 </div>
 
 <!-- Pull OCI Image modal -->
-<div id="pullOciModal" class="modal hidden">
+<div id="pullOciModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pullOciTitle">
   <div class="modal-backdrop" onclick="closePullOciModal()"></div>
   <div class="modal-content" style="width: 580px; max-width: 92vw;">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-      <h3 style="margin: 0; font-size: 16px; font-weight: 600;">⇩ Pull OCI Base Image</h3>
+      <h3 id="pullOciTitle" style="margin: 0; font-size: 16px; font-weight: 600;">⇩ Pull OCI Base Image</h3>
       <button type="button" class="ghost" onclick="closePullOciModal()" style="padding: 4px 10px; font-size: 16px; line-height: 1;" title="Close">✕</button>
     </div>
     <div class="muted" style="margin-bottom: 12px; font-size: 13px;">Select a curated macOS base image or specify a custom registry URL:</div>
@@ -1901,8 +1901,16 @@ async function submitOciPull() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ image, insecure })
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to start OCI pull");
+    if (!res.ok) {
+      let errText = "";
+      try {
+        const data = await res.json();
+        errText = data.error || data.message;
+      } catch (_) {
+        errText = await res.text().catch(() => "");
+      }
+      throw new Error((errText || "").trim() || "Failed to start OCI pull");
+    }
     toast("OCI Pull", "Pull task started for " + image, "good");
     const logContainer = document.getElementById("pullOciLogContainer");
     if (logContainer) logContainer.classList.remove("hidden");
@@ -2756,6 +2764,7 @@ document.addEventListener("click", (e) => {
 el("pullOciBtn").onclick = openPullOciModal;
 el("pullOciCancel").onclick = closePullOciModal;
 el("pullOciSubmit").onclick = submitOciPull;
+el("ociImageInput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitOciPull(); });
 q("#pullOciModal .modal-backdrop").onclick = closePullOciModal;
 
 document.addEventListener("keydown", (e) => {

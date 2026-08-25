@@ -336,9 +336,13 @@ test("SSH guide input binding skips missing optional controls without aborting s
   assert.equal(listeners, 1);
 });
 
-test("Pull OCI modal contains required controls and macOS preset chips", () => {
+test("Pull OCI modal contains required controls, accessibility attributes, and macOS preset chips", () => {
   const requiredElements = [
     'id="pullOciModal"',
+    'role="dialog"',
+    'aria-modal="true"',
+    'aria-labelledby="pullOciTitle"',
+    'id="pullOciTitle"',
     'id="pullOciBtn"',
     'id="ociImageInput"',
     'id="ociInsecureChk"',
@@ -480,4 +484,54 @@ test("renderTasks streams pull progress to pullOciLog when pull modal is open", 
   assert.equal(elements.pullOciLog.textContent, "Downloading layer 1/5...");
   assert.equal(elements.pullOciSubmit.disabled, true);
   assert.equal(elements.pullOciSubmit.textContent, "Pulling...");
+});
+
+test("submitOciPull handles text/plain and json error responses gracefully", async () => {
+  const toasts = [];
+  const input = { value: "ghcr.io/cirruslabs/macos-sequoia-base:latest" };
+  const submitBtn = { disabled: false, textContent: "" };
+  const document = {
+    getElementById(id) {
+      if (id === "ociImageInput") return input;
+      if (id === "ociInsecureChk") return { checked: false };
+      if (id === "pullOciSubmit") return submitBtn;
+      if (id === "pullOciLogContainer") return { classList: { remove() {} } };
+      return null;
+    },
+  };
+
+  // Test 1: Plain-text error (like Go http.Error 409)
+  const submitOciPullPlainTextErr = evaluateFunction("submitOciPull", {
+    document,
+    api: async () => ({
+      ok: false,
+      json: async () => { throw new SyntaxError("Unexpected token"); },
+      text: async () => "a pull for this image is already in progress\n",
+    }),
+    toast: (title, msg, type) => { toasts.push({ title, msg, type }); },
+  });
+
+  await submitOciPullPlainTextErr();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].title, "OCI Pull Failed");
+  assert.equal(toasts[0].msg, "a pull for this image is already in progress");
+  assert.equal(submitBtn.disabled, false);
+  assert.equal(submitBtn.textContent, "Pull Image");
+
+  // Test 2: JSON error
+  toasts.length = 0;
+  const submitOciPullJsonErr = evaluateFunction("submitOciPull", {
+    document,
+    api: async () => ({
+      ok: false,
+      json: async () => ({ error: "insufficient disk space" }),
+      text: async () => '{"error":"insufficient disk space"}',
+    }),
+    toast: (title, msg, type) => { toasts.push({ title, msg, type }); },
+  });
+
+  await submitOciPullJsonErr();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].title, "OCI Pull Failed");
+  assert.equal(toasts[0].msg, "insufficient disk space");
 });
