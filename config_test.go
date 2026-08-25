@@ -323,3 +323,44 @@ func TestHasArg(t *testing.T) {
 	}
 }
 
+
+func TestFirstRunCompletedConfig(t *testing.T) {
+	m := newTestManager(t)
+	mux := m.routes()
+
+	// Initial default should be false and empty string
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var view struct {
+		FirstRunCompleted bool   `json:"firstRunCompleted"`
+		OperatorRole      string `json:"operatorRole"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("failed to decode config view: %v", err)
+	}
+	if view.FirstRunCompleted {
+		t.Fatalf("expected FirstRunCompleted to default to false")
+	}
+	if view.OperatorRole != "" {
+		t.Fatalf("expected OperatorRole to default to empty string")
+	}
+
+	// Update firstRunCompleted and operatorRole via POST /api/config
+	updateBody := `{"firstRunCompleted": true, "operatorRole": "jamf"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewBufferString(updateBody))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	m.mu.Lock()
+	savedCompleted := m.cfg.FirstRunCompleted
+	savedRole := m.cfg.OperatorRole
+	m.mu.Unlock()
+
+	if !savedCompleted || savedRole != "jamf" {
+		t.Fatalf("failed to persist firstRunCompleted/operatorRole: got completed=%v role=%s", savedCompleted, savedRole)
+	}
+}

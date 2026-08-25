@@ -272,6 +272,8 @@ type Config struct {
 	LogPath                 string        `json:"logPath"`            // path to log file (rotation at 5MB)
 	ServerLabel             string        `json:"serverLabel"`        // custom label to identify this server instance
 	ShowRunningOnly         bool          `json:"showRunningOnly"`    // dashboard filter: show only running VMs
+	FirstRunCompleted       bool          `json:"firstRunCompleted"`  // whether initial setup wizard has completed
+	OperatorRole            string        `json:"operatorRole"`       // operator persona preset (e.g. "jamf", "general")
 }
 
 type configView struct {
@@ -361,6 +363,8 @@ func defaultConfig() Config {
 		BootTimeoutSec:          60,
 		HistoryDays:             60,
 		LogPath:                 "~/Library/Logs/tart-oven.log",
+		FirstRunCompleted:       false,
+		OperatorRole:            "",
 	}
 }
 
@@ -3312,6 +3316,18 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var v bool
 		if json.Unmarshal(raw, &v) == nil {
 			m.cfg.ShowRunningOnly = v
+		}
+	}
+	if raw, ok := fields["firstRunCompleted"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.FirstRunCompleted = v
+		}
+	}
+	if raw, ok := fields["operatorRole"]; ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.OperatorRole = strings.TrimSpace(v)
 		}
 	}
 
