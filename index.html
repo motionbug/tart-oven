@@ -493,13 +493,39 @@
     </div>
 
     <div class="panel">
-      <h2>SSH command</h2>
-      <div class="ssh-row">
-        <select id="sshTarget"></select>
-        <input type="text" id="sshCommand" placeholder="e.g. sw_vers; whoami" autocomplete="off">
-        <input type="password" id="sshSudoPw" placeholder="sudo password (if needed)" autocomplete="off" style="width:220px;flex:none">
-        <button id="sshRun">Run</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <h2 style="margin:0">Guest Commands</h2>
+        <div class="tabs" style="margin-bottom:0">
+          <button class="tabbtn active" type="button" id="cmdTabSshBtn" onclick="switchCmdTab('ssh')">SSH &amp; Shell</button>
+          <button class="tabbtn" type="button" id="cmdTabJamfBtn" onclick="switchCmdTab('jamf')">Jamf Commands</button>
+        </div>
       </div>
+
+      <!-- Tab 1: SSH / Shell Commands -->
+      <div id="cmdTabSsh">
+        <div class="ssh-row">
+          <select id="sshTarget"></select>
+          <input type="text" id="sshCommand" placeholder="e.g. sw_vers; whoami" autocomplete="off">
+          <input type="password" id="sshSudoPw" placeholder="sudo password (if needed)" autocomplete="off" style="width:220px;flex:none">
+          <button id="sshRun">Run</button>
+        </div>
+      </div>
+
+      <!-- Tab 2: Jamf Commands -->
+      <div id="cmdTabJamf" style="display:none">
+        <div class="ssh-row" style="margin-bottom:10px">
+          <select id="jamfCmdTarget" style="width:260px;flex:none"></select>
+          <input type="password" id="jamfSudoPw" placeholder="sudo password (if needed)" autocomplete="off" style="width:220px;flex:none">
+          <button type="button" id="jamfBtnPolicy" class="ghost" onclick="runJamfPreset('sudo jamf policy')">⚡ sudo jamf policy</button>
+          <button type="button" id="jamfBtnRecon" class="ghost" onclick="runJamfPreset('sudo jamf recon')">🔍 sudo jamf recon</button>
+          <button type="button" id="jamfBtnManage" class="ghost" onclick="runJamfPreset('sudo jamf manage')">🛡️ sudo jamf manage</button>
+        </div>
+        <div class="ssh-row" style="margin-bottom:14px">
+          <input type="text" id="jamfEventName" placeholder="Enter custom event name (e.g. install-chrome) for sudo jamf policy -event &lt;name&gt;" autocomplete="off">
+          <button type="button" id="jamfBtnEvent" onclick="runJamfEvent()">Run Event</button>
+        </div>
+      </div>
+
       <div id="console"></div>
     </div>
 
@@ -731,6 +757,8 @@
         <div class="field"><label>Daily stop time</label><input type="time" id="dailyStop"><small>Stop running VMs</small></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="dailyEnabled"><span class="slider"></span></span> Limit scheduler to daily hours</label></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="excludeOciFromScheduler"><span class="slider"></span></span> Exclude OCI images from scheduler</label><small>Recommended: keep registry images for cloning and run only local VMs.</small></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="noGraphics"><span class="slider"></span></span> Headless mode (--no-graphics)</label><small>Don't open a GUI window on host. Use Screen Sharing to view VMs.</small></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="noAudio"><span class="slider"></span></span> Disable audio (--no-audio)</label><small>Disable host audio pass-through.</small></div>
         <div class="field" style="grid-column: 1 / -1;"><label>Excluded VM names (one per line or comma-separated)</label><textarea id="excluded"></textarea></div>
       </div>
     </div>
@@ -1210,6 +1238,8 @@ function fillConfig(c) {
   set("dailyStop", c.dailyStop || "22:00");
   chk("dailyEnabled", c.dailyEnabled);
   chk("excludeOciFromScheduler", c.excludeOciFromScheduler !== false);
+  chk("noGraphics", c.noGraphics);
+  chk("noAudio", c.noAudio);
   set("vmStoragePath", c.vmStoragePath);
   set("sharedDir", c.sharedDir);
   set("tartAppPath", c.tartAppPath || "/Applications/tart.app/Contents/MacOS/tart");
@@ -1246,6 +1276,8 @@ function readConfig() {
     schedulerMode: str("schedulerMode"),
     dailyEnabled: document.getElementById("dailyEnabled").checked,
     excludeOciFromScheduler: document.getElementById("excludeOciFromScheduler").checked,
+    noGraphics: chk("noGraphics"),
+    noAudio: chk("noAudio"),
     dailyStart: str("dailyStart"), dailyStop: str("dailyStop"),
     excluded,
     paused: latest ? latest.config.paused : false,
@@ -1854,19 +1886,66 @@ setInterval(() => {
   });
 }, 1000);
 
-// ---- SSH command panel ----
+// ---- Guest command panels (SSH & Jamf) ----
+function switchCmdTab(tab) {
+  const isSsh = tab === "ssh";
+  const sshPanel = document.getElementById("cmdTabSsh");
+  const jamfPanel = document.getElementById("cmdTabJamf");
+  const sshBtn = document.getElementById("cmdTabSshBtn");
+  const jamfBtn = document.getElementById("cmdTabJamfBtn");
+  if (sshPanel) sshPanel.style.display = isSsh ? "" : "none";
+  if (jamfPanel) jamfPanel.style.display = isSsh ? "none" : "";
+  if (sshBtn) sshBtn.classList.toggle("active", isSsh);
+  if (jamfBtn) jamfBtn.classList.toggle("active", !isSsh);
+}
+
 function fillSshTargets(vms) {
   const sel = document.getElementById("sshTarget");
-  const prev = sel.value;
+  const jamfSel = document.getElementById("jamfCmdTarget");
+  const prev = sel ? sel.value : "";
+  const prevJamf = jamfSel ? jamfSel.value : "";
   const running = vms.filter(v => !isOCI(v.source) && v.state === "running");
-  sel.innerHTML = running.length
+  const html = running.length
     ? running.map(v => '<option value="' + esc(v.name) + '">' + esc(v.name) + '</option>').join("")
     : '<option value="">— no running VM —</option>';
-  if (prev && running.some(v => v.name === prev)) sel.value = prev;
+  if (sel) {
+    sel.innerHTML = html;
+    if (prev && running.some(v => v.name === prev)) sel.value = prev;
+  }
+  if (jamfSel) {
+    jamfSel.innerHTML = html;
+    if (prevJamf && running.some(v => v.name === prevJamf)) jamfSel.value = prevJamf;
+  }
 }
 el("sshRun").onclick = sendCmd;
 el("sshCommand").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 el("sshSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
+el("jamfEventName").addEventListener("keydown", e => { if (e.key === "Enter") runJamfEvent(); });
+el("jamfSudoPw").addEventListener("keydown", e => { if (e.key === "Enter") runJamfPreset("sudo jamf policy"); });
+
+async function runJamfPreset(cmd) {
+  const targetEl = document.getElementById("jamfCmdTarget");
+  const name = targetEl ? targetEl.value : "";
+  const pwEl = document.getElementById("jamfSudoPw");
+  const sudoPassword = pwEl ? pwEl.value : "";
+  if (!name) { toast("Jamf Command", "Pick a running VM first.", "bad"); return; }
+  logLine("clog", "$ [" + name + "] " + cmd + (sudoPassword ? "   (with sudo password)" : ""));
+  if (pwEl) pwEl.value = "";
+  try {
+    const res = await api("/api/exec", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, command: cmd, sudoPassword })
+    });
+    showResult(await res.json());
+  } catch (e) { logLine("cbad", "✗ " + e.message); }
+}
+
+async function runJamfEvent() {
+  const eventInput = document.getElementById("jamfEventName");
+  const eventName = eventInput ? eventInput.value.trim() : "";
+  if (!eventName) { toast("Jamf Event", "Enter an event name first.", "bad"); return; }
+  await runJamfPreset("sudo jamf policy -event " + eventName);
+}
 
 // ---- VM edit modal (notes + tags) ----
 let editVmName = "";

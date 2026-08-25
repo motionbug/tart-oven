@@ -294,3 +294,32 @@ func TestLoadPreservesACustomisedStatusCommand(t *testing.T) {
 		t.Fatalf("customised status command was overwritten: %q", m.cfg.StatusCommand)
 	}
 }
+
+func TestHandleConfigAppliesNoGraphicsAndNoAudio(t *testing.T) {
+	m := newTestManager(t)
+	body := `{"noGraphics":true,"noAudio":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	m.handleConfig(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if !m.cfg.NoGraphics || !m.cfg.NoAudio {
+		t.Fatalf("NoGraphics = %v, NoAudio = %v; want both true", m.cfg.NoGraphics, m.cfg.NoAudio)
+	}
+}
+
+func TestHasArg(t *testing.T) {
+	args := []string{"--net-bridged=en0", "--no-graphics", "--dir=host_resources:/shared"}
+	if !hasArg(args, "--no-graphics") {
+		t.Error("expected --no-graphics to be found")
+	}
+	if !hasArg(args, "--net-bridged") {
+		t.Error("expected --net-bridged prefix to be found")
+	}
+	if hasArg(args, "--no-audio") {
+		t.Error("did not expect --no-audio to be found")
+	}
+}
+

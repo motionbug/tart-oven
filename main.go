@@ -249,6 +249,8 @@ type Config struct {
 	SchedulerMode           string        `json:"schedulerMode"`           // "random" | "sequential" (alphabetical)
 	Excluded                []string      `json:"excluded"`                // VM names never auto-selected
 	ExcludeOCIFromScheduler bool          `json:"excludeOciFromScheduler"` // keep cached OCI images clone-only by default
+	NoGraphics              bool          `json:"noGraphics"`              // run VMs headless without a GUI window (--no-graphics)
+	NoAudio                 bool          `json:"noAudio"`                 // disable host audio pass-through (--no-audio)
 	JamfRecon               bool          `json:"jamfRecon"`               // run `jamf recon` after start/stop
 	Paused                  bool          `json:"paused"`                  // global scheduler pause
 	DailyEnabled            bool          `json:"dailyEnabled"`            // gate auto-runs to a daily time window
@@ -341,6 +343,8 @@ func defaultConfig() Config {
 		SchedulerMode:           "sequential",
 		Excluded:                []string{},
 		ExcludeOCIFromScheduler: true,
+		NoGraphics:              false,
+		NoAudio:                 false,
 		JamfRecon:               false,
 		Paused:                  true, // scheduler OFF until the user turns it on
 		DailyEnabled:            true,
@@ -386,6 +390,16 @@ func splitArgs(s string) []string {
 	}
 	flush()
 	return args
+}
+
+// hasArg reports whether target flag is present in args (either exact match or with =value).
+func hasArg(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // parseHHMM parses "HH:MM" into minutes-since-midnight.
@@ -1381,6 +1395,12 @@ func (m *Manager) doRun(name, trigger string) {
 	runArgs := []string{"run", name,
 		"--net-bridged=" + iface,
 		"--dir=host_resources:" + shared}
+	if m.cfg.NoGraphics && !hasArg(extra, "--no-graphics") {
+		runArgs = append(runArgs, "--no-graphics")
+	}
+	if m.cfg.NoAudio && !hasArg(extra, "--no-audio") {
+		runArgs = append(runArgs, "--no-audio")
+	}
 	runArgs = append(runArgs, extra...)
 	m.logln("$ tart %s", strings.Join(runArgs, " "))
 	runLog := &boundedBuffer{max: 8192}
@@ -3110,6 +3130,18 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var v bool
 		if json.Unmarshal(raw, &v) == nil {
 			m.cfg.ExcludeOCIFromScheduler = v
+		}
+	}
+	if raw, ok := fields["noGraphics"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.NoGraphics = v
+		}
+	}
+	if raw, ok := fields["noAudio"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.NoAudio = v
 		}
 	}
 	if raw, ok := fields["jamfRecon"]; ok {

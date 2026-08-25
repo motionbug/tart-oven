@@ -332,3 +332,31 @@ func TestVMLookupClearsPreviousMemorySuggestion(t *testing.T) {
 		t.Fatal("loadVMInfo does not clear the previous memory suggestion before fetching another VM")
 	}
 }
+
+func TestJamfCommandControlsAndSchedulerOptions(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, requiredID := range []string{
+		`id="cmdTabSshBtn"`,
+		`id="cmdTabJamfBtn"`,
+		`id="cmdTabSsh"`,
+		`id="cmdTabJamf"`,
+		`id="jamfCmdTarget"`,
+		`id="jamfSudoPw"`,
+		`id="jamfBtnPolicy"`,
+		`id="jamfBtnRecon"`,
+		`id="jamfBtnManage"`,
+		`id="jamfEventName"`,
+		`id="jamfBtnEvent"`,
+		`id="noGraphics"`,
+		`id="noAudio"`,
+	} {
+		if !strings.Contains(html, requiredID) {
+			t.Errorf("missing required element %s in index.html", requiredID)
+		}
+	}
+}
+
