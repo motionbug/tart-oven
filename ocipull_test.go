@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +17,7 @@ func TestValidateOCIImageURI(t *testing.T) {
 		"ghcr.io/cirruslabs/macos-tahoe-base:latest",
 		"docker.io/library/macos:15",
 		"registry.internal.corp/team/macos-runner:v1.2",
+		"localhost:5000/myorg/macos-runner:latest",
 	}
 	for _, u := range valid {
 		got, err := validateOCIImageURI(u)
@@ -58,5 +63,64 @@ func TestCheckFreeDiskSpace(t *testing.T) {
 	_, err = checkFreeDiskSpace(tempDir, impossible)
 	if err == nil || !strings.Contains(err.Error(), "insufficient disk space") {
 		t.Errorf("expected insufficient disk space error, got: %v", err)
+	}
+}
+
+func TestHandleOCIPull(t *testing.T) {
+	m := newTestManager(t)
+	mux := m.routes()
+
+	// 1. Method not allowed
+	req := httptest.NewRequest(http.MethodGet, "/api/oci/pull", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
+	}
+
+	// 2. Bad JSON
+	req = httptest.NewRequest(http.MethodPost, "/api/oci/pull", bytes.NewBufferString(`{invalid json`))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+	}
+
+	// 3. Invalid image URI payload
+	req = httptest.NewRequest(http.MethodPost, "/api/oci/pull", bytes.NewBufferString(`{"image":"bad;image"}`))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+	}
+
+	// 4. Valid payload starts task
+	validBody, _ := json.Marshal(ociPullReq{
+		Image:    "ghcr.io/cirruslabs/macos-sonoma-base:latest",
+		Insecure: true,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/oci/pull", bytes.NewBuffer(validBody))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["ok"] != true {
+		t.Fatalf("unexpected response: %v", rec.Body.String())
+	}
+	if res["image"] != "ghcr.io/cirruslabs/macos-sonoma-base:latest" {
+		t.Fatalf("expected image in response, got %v", res["image"])
+	}
+	if res["taskId"] == nil || res["taskId"] == "" {
+		t.Fatalf("expected non-empty taskId in response, got %v", res["taskId"])
+	}
+
+	// 5. Duplicate pull prevention
+	req = httptest.NewRequest(http.MethodPost, "/api/oci/pull", bytes.NewBuffer(validBody))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict for duplicate pull, got %d", rec.Code)
 	}
 }

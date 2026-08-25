@@ -2762,6 +2762,8 @@ func (m *Manager) routes() *http.ServeMux {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
+	mux.HandleFunc("/api/oci/pull", m.handleOCIPull)
+
 	// Cancels a running Activity task (create/clone/install) by killing its
 	// in-flight command. No-op if the task already finished or doesn't exist.
 	mux.HandleFunc("/api/task/cancel", func(w http.ResponseWriter, r *http.Request) {
