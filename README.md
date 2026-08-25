@@ -198,9 +198,14 @@ The Dashboard features a dedicated **MDM** status column reporting each guest's 
 >
 > In the CLI:
 > ```sh
-> tart clone --random-serial --random-mac base-jamf-template enrolled-vm-01
+> # Step 1: Clone the base template
+> tart clone base-jamf-template enrolled-vm-01
+>
+> # Step 2: Randomize hardware serial number and MAC address
+> tart set enrolled-vm-01 --random-serial --random-mac
 > ```
-> Or in Tart Oven Web UI: Ensure **Randomize Serial Number** and **Randomize MAC Address** checkboxes are enabled during clone creation.
+>
+> *Note: In Tart CLI, cloning and randomization are performed in two commands (`tart clone` followed by `tart set --random-serial --random-mac`). In the Tart Oven Web UI and backend API (`POST /api/vm/create`), both steps are performed automatically in one click whenever **Randomize Serial Number** and **Randomize MAC Address** (`randomSerial: true`, `randomMac: true`) are selected.*
 
 #### Why Hardware Randomization is Critical for MDM
 
@@ -224,6 +229,7 @@ Tart Oven can automatically stage an enrollment invitation profile onto a base t
                                                                 ┌────────────────────────┐
                                                                 │ 4. Clone for Users     │
                                                                 │ tart clone             │
+                                                                │ tart set               │
                                                                 │  --random-serial       │
                                                                 │  --random-mac          │
                                                                 └────────────────────────┘
@@ -281,21 +287,29 @@ Tart Oven exposes a comprehensive JSON REST API and real-time Server-Sent Events
 | `POST` | `/api/run` | Start a stopped virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
 | `POST` | `/api/stop` | Immediate hard stop (`tart stop -t 5`) | `{"name": "vm-name"}` | `{"ok": true}` |
 | `POST` | `/api/restart` | Stop and restart a virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
-| `POST` | `/api/exec` | Execute command in guest (agent first, SSH fallback) | `{"name": "vm-name", "command": "uname -a"}` | `{"stdout": "...", "stderr": "...", "exitCode": 0}` |
-| `GET` | `/api/info` | Query guest reachability and hardware details | `?name=vm-name` | `{"reachable": true, "ip": "...", "osVersion": "..."}` |
+| `POST` | `/api/exec` | Execute command in guest (agent first, SSH fallback) | `{"name": "vm-name", "command": "uname -a", "sudoPassword": ""}` | `{"stdout": "...", "stderr": "...", "exitCode": 0, "durationMs": 120}` |
+| `GET` | `/api/info` | Query guest reachability and hardware details | `?name=vm-name` | `{"stdout": "...", "stderr": "...", "exitCode": 0, "durationMs": 120}` |
+| `GET` | `/api/vm/get` | Query VM configuration directly from Tart | `?name=vm-name` | Tart JSON (`{"os": "...", "cpu": 4, "memory": 8192, ...}`) |
 | `POST` | `/api/oci/pull` | Pull an OCI base image asynchronously | `{"image": "ghcr.io/...", "insecure": false}` | `{"ok": true, "taskId": "...", "image": "..."}` |
-| `POST` | `/api/vm/create` | Provision new VM from IPSW or clone template | `{"name": "...", "source": "...", "cpu": 4, "memory": 8192, "disk": 50, "randomSerial": true, "randomMac": true}` | `{"ok": true, "taskId": "..."}` |
-| `POST` | `/api/vm/set` | Reconfigure VM hardware settings | `{"name": "...", "cpu": 6, "memory": 12288, "disk": 60, "display": "1920x1080"}` | `{"ok": true}` |
+| `POST` | `/api/task/cancel` | Cancel an in-flight background task | `{"id": "task-uuid"}` | `{"ok": true}` |
+| `POST` | `/api/vm/create` | Provision new VM from IPSW or clone template | `{"name": "...", "source": "...", "cpu": 4, "memory": 8192, "disk": 50, "randomSerial": true, "randomMac": true}` | `{"ok": true}` |
+| `POST` | `/api/vm/set` | Reconfigure VM hardware settings | `{"name": "...", "cpu": 6, "memory": 12288, "disk": 60, "display": "1920x1080", "randomSerial": true, "randomMac": true}` | `{"ok": true}` |
 | `POST` | `/api/vm/rename` | Rename a stopped virtual machine | `{"name": "old-name", "newName": "new-name"}` | `{"ok": true}` |
 | `POST` | `/api/vm/delete` | Delete a stopped virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
-| `POST` | `/api/vm/install-agent` | Install Tart guest agent into a running VM | `{"name": "vm-name"}` | `{"ok": true, "taskId": "..."}` |
+| `POST` | `/api/vm/notes` | Update VM notes, tags, and SSH overrides | `{"name": "vm-name", "notes": "...", "tags": ["ci"], "sshUser": "admin", "sshPassword": ""}` | `{"ok": true}` |
+| `POST` | `/api/vm/install-agent` | Install Tart guest agent into a running VM | `{"name": "vm-name"}` | `{"ok": true}` |
 | `POST` | `/api/vm/mdm-profile` | Stage Jamf enrollment profile to guest Desktop | `{"name": "vm-name"}` | `{"ok": true}` |
 | `POST` | `/api/vm/clear-boot-failure` | Clear boot failure error flag | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/install-tart` | Download and install Tart CLI on host | None | `{"ok": true}` |
 | `POST` | `/api/refresh` | Force immediate reconcile against Tart storage | None | `{"ok": true}` |
 | `GET` | `/api/performance` | Query latest host metrics and 24h telemetry history | None | `{"current": {...}, "history": [...]}` |
 | `GET` | `/api/history` | Retrieve rolling execution and audit log entries | None | `[{"time": "...", "vm": "...", "action": "..."}]` |
 | `GET` | `/api/config` | Read current daemon configuration | None | `{Config Object}` |
 | `POST` | `/api/config` | Update daemon configuration | `{Partial Config Object}` | `{"ok": true}` |
+| `GET` | `/api/server/launchagent` | Check status of user LaunchAgent | None | `{"installed": true, "path": "..."}` |
+| `POST` | `/api/server/launchagent` | Install or uninstall user LaunchAgent | `{"action": "install"}` | `{"ok": true}` |
+| `POST` | `/api/server/restart` | Gracefully restart Tart Oven server process | None | `{"ok": true}` |
+| `POST` | `/api/server/stop` | Gracefully stop Tart Oven server process | None | `{"ok": true}` |
 | `GET` | `/api/readme` | Fetch raw embedded documentation markdown | None | `text/markdown` |
 | `GET` | `/api/changelog` | Fetch raw embedded changelog markdown | None | `text/markdown` |
 | `GET` | `/events` | Real-time Server-Sent Events (SSE) event stream | None | `text/event-stream` |
@@ -342,9 +356,11 @@ Multiple test VMs report the same Jamf Pro Computer Record ID, inventory check-i
 
 #### Resolution Steps
 1. **Identify Duplicate Serial Numbers**:
-   In Tart Oven or Terminal, inspect the serial number of affected VMs:
+   In Tart Oven or Terminal, inspect the serial number and hardware details of affected VMs:
    ```sh
-   tart get <vm-name> --serial
+   tart get <vm-name>
+   # Or view structured JSON details:
+   tart get <vm-name> --format json
    ```
 2. **Purge Duplicate Computer Records in Jamf Pro**:
    - In Jamf Pro Web Console, navigate to **Computers → Search Inventory**.
@@ -354,10 +370,11 @@ Multiple test VMs report the same Jamf Pro Computer Record ID, inventory check-i
    Delete the un-randomized clone and recreate it enforcing `--random-serial` and `--random-mac`:
    ```sh
    tart delete <vm-name>
-   tart clone --random-serial --random-mac <base-template> <new-vm-name>
+   tart clone <base-template> <new-vm-name>
+   tart set <new-vm-name> --random-serial --random-mac
    ```
 4. **Boot and Re-enroll**:
-   Start the new VM, verify its unique serial number (`tart get <new-vm-name> --serial`), and proceed with MDM enrollment.
+   Start the new VM, verify its randomized serial number (`tart get <new-vm-name>` or in the Tart Oven Web UI), and proceed with MDM enrollment.
 
 ---
 
