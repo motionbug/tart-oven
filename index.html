@@ -27,15 +27,15 @@
     --ring-focus: rgba(59, 130, 246, 0.4);
     --radius: 8px;
 
-    /* Legacy backward-compatibility mappings */
-    --bg: var(--background);
-    --panel: var(--card);
-    --panel2: var(--secondary);
-    --border: var(--border-color);
-    --text: var(--foreground);
-    --muted: var(--muted-fg);
-    --accent: var(--accent-color);
-    --accent2: var(--accent-hover);
+    /* Backward-compatibility and direct-resolved theme values */
+    --bg: #09090b;
+    --panel: #18181b;
+    --panel2: #27272a;
+    --border: #27272a;
+    --text: #fafafa;
+    --muted: #a1a1aa;
+    --accent: #3b82f6;
+    --accent2: #2563eb;
     --green: #10b981;
     --red: #f43f5e;
     --amber: #f59e0b;
@@ -67,15 +67,15 @@
     --ring-focus: rgba(37, 99, 235, 0.3);
     --radius: 8px;
 
-    /* Legacy backward-compatibility mappings */
-    --bg: var(--background);
-    --panel: var(--card);
-    --panel2: var(--secondary);
-    --border: var(--border-color);
-    --text: var(--foreground);
-    --muted: var(--muted-fg);
-    --accent: var(--accent-color);
-    --accent2: var(--accent-hover);
+    /* Backward-compatibility and direct-resolved theme values */
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --panel2: #f4f4f5;
+    --border: #e4e4e7;
+    --text: #09090b;
+    --muted: #71717a;
+    --accent: #2563eb;
+    --accent2: #1d4ed8;
     --green: #16a34a;
     --red: #dc2626;
     --amber: #ca8a04;
@@ -1014,13 +1014,28 @@ function drawLineChart(canvas, series, options) {
 
   const css = getComputedStyle(document.documentElement);
   const resolveColour = colour => {
-    if (!colour) return css.getPropertyValue("--accent").trim();
-    if (colour.startsWith("--")) return css.getPropertyValue(colour).trim();
+    if (!colour) return css.getPropertyValue("--accent").trim() || "#3b82f6";
+    if (colour.startsWith("--")) {
+      const val = css.getPropertyValue(colour).trim();
+      if (val.startsWith("var(")) {
+        const m = val.match(/^var\((--[^,)]+)\)/);
+        return m ? (css.getPropertyValue(m[1]).trim() || "#3b82f6") : val;
+      }
+      return val || "#3b82f6";
+    }
     const variable = colour.match(/^var\((--[^)]+)\)$/);
-    return variable ? css.getPropertyValue(variable[1]).trim() : colour;
+    if (variable) {
+      const val = css.getPropertyValue(variable[1]).trim();
+      if (val.startsWith("var(")) {
+        const m = val.match(/^var\((--[^,)]+)\)/);
+        return m ? (css.getPropertyValue(m[1]).trim() || "#3b82f6") : val;
+      }
+      return val || "#3b82f6";
+    }
+    return colour;
   };
-  const border = css.getPropertyValue("--border").trim();
-  const muted = css.getPropertyValue("--muted").trim();
+  const border = resolveColour("--border") || "#27272a";
+  const muted = resolveColour("--muted") || "#71717a";
   const left = 43, right = 10, top = 10, bottom = 25;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
