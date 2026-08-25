@@ -588,6 +588,7 @@ test("renderMarkdown generates slug heading IDs, TOC items in helpToc, and code 
 test("filterHelp filters rendered sections and highlights search terms", () => {
   function makeElement(tag, text, initialHtml) {
     const el = {
+      nodeType: 1,
       tagName: tag.toUpperCase(),
       textContent: text,
       innerHTML: initialHtml || text,
@@ -761,4 +762,298 @@ test("showTab switches tab state and loads readme for help and guide aliases", (
   assert.equal(tabs[1].classList.classes.has("active"), true);
   assert.equal(buttons[1].classList.classes.has("active"), true);
   assert.equal(readmeLoaded, 2);
+});
+
+test("filterHelp escapes HTML characters in search highlights preventing tag corruption and XSS", () => {
+  function makeElement(tag, text, initialHtml) {
+    const el = {
+      nodeType: 1,
+      tagName: tag.toUpperCase(),
+      textContent: text,
+      innerHTML: initialHtml || text,
+      style: {},
+      classList: {
+        classes: new Set(),
+        add(c) { this.classes.add(c); },
+        remove(c) { this.classes.delete(c); },
+        contains(c) { return this.classes.has(c); },
+      },
+      childNodes: [],
+      parentNode: null,
+      dataset: {},
+      querySelector() { return null; },
+    };
+    return el;
+  }
+
+  const textVal = "Configure tart set <vm-name> --memory <mb-size> & test";
+  const textNode = {
+    nodeType: 3,
+    nodeValue: textVal,
+    parentNode: null,
+  };
+
+  const sec = makeElement("section", textVal, "<p>" + textVal + "</p>");
+  sec.dataset.sectionId = "cmd-section";
+  textNode.parentNode = sec;
+  sec.childNodes = [textNode];
+
+  let createdSpan = null;
+  sec.replaceChild = (newChild, oldChild) => {
+    createdSpan = newChild;
+  };
+
+  const content = {
+    querySelectorAll(selector) {
+      if (selector.includes(".help-section")) return [sec];
+      return [];
+    },
+  };
+
+  const document = {
+    getElementById(id) {
+      if (id === "helpContent" || id === "readme") return content;
+      return null;
+    },
+    createElement(tag) {
+      const el = makeElement(tag, "", "");
+      return el;
+    },
+  };
+
+  const filterHelp = evaluateFunction("filterHelp", { document });
+
+  filterHelp("tart");
+  assert.ok(createdSpan !== null, "span should have been created for highlight");
+  assert.match(createdSpan.innerHTML, /<mark class="help-highlight">tart<\/mark>/);
+  assert.match(createdSpan.innerHTML, /&lt;vm-name&gt;/);
+  assert.match(createdSpan.innerHTML, /&lt;mb-size&gt;/);
+  assert.match(createdSpan.innerHTML, /&amp;/);
+  assert.doesNotMatch(createdSpan.innerHTML, /<vm-name>/);
+});
+
+test("copySnippet uses fallback to document.execCommand when navigator.clipboard is unavailable", () => {
+  let execCommandCalled = "";
+  let textareaValue = "";
+  let appendedChild = null;
+  let removedChild = null;
+
+  const mockTextarea = {
+    style: {},
+    setAttribute() {},
+    select() {},
+    set value(v) { textareaValue = v; },
+    get value() { return textareaValue; },
+  };
+
+  const mockBody = {
+    appendChild(child) { appendedChild = child; },
+    removeChild(child) { removedChild = child; },
+  };
+
+  const mockDocument = {
+    body: mockBody,
+    createElement(tag) {
+      if (tag === "textarea") return mockTextarea;
+      return {};
+    },
+    execCommand(cmd) {
+      execCommandCalled = cmd;
+      return true;
+    },
+  };
+
+  const codeEl = { textContent: "tart clone ghcr.io/base vm1" };
+  const wrapper = {
+    querySelector(sel) {
+      if (sel.includes("code") || sel.includes("pre")) return codeEl;
+      return null;
+    },
+  };
+  const btn = {
+    textContent: "Copy",
+    dataset: {},
+    classList: {
+      classes: new Set(),
+      add(c) { this.classes.add(c); },
+      remove(c) { this.classes.delete(c); },
+    },
+    closest() { return wrapper; },
+    parentElement: wrapper,
+  };
+
+  const copySnippet = evaluateFunction("copySnippet", {
+    document: mockDocument,
+    navigator: {}, // No clipboard
+    setTimeout: (fn) => fn(),
+    clearTimeout: () => {},
+  });
+
+  copySnippet(btn);
+
+  assert.equal(execCommandCalled, "copy");
+  assert.equal(textareaValue, "tart clone ghcr.io/base vm1");
+  assert.equal(appendedChild, mockTextarea);
+  assert.equal(removedChild, mockTextarea);
+  assert.equal(btn.textContent, "Copy");
+});
+
+test("copySnippet uses fallback when navigator.clipboard.writeText rejects", async () => {
+  let execCommandCalled = "";
+  let textareaValue = "";
+
+  const mockTextarea = {
+    style: {},
+    setAttribute() {},
+    select() {},
+    set value(v) { textareaValue = v; },
+    get value() { return textareaValue; },
+  };
+
+  const mockBody = {
+    appendChild() {},
+    removeChild() {},
+  };
+
+  const mockDocument = {
+    body: mockBody,
+    createElement(tag) {
+      if (tag === "textarea") return mockTextarea;
+      return {};
+    },
+    execCommand(cmd) {
+      execCommandCalled = cmd;
+      return true;
+    },
+  };
+
+  const mockNavigator = {
+    clipboard: {
+      writeText: async () => {
+        throw new Error("Clipboard permission denied");
+      },
+    },
+  };
+
+  const codeEl = { textContent: "tart run vm1" };
+  const wrapper = { querySelector: () => codeEl };
+  const btn = {
+    textContent: "Copy",
+    dataset: {},
+    classList: {
+      classes: new Set(),
+      add(c) { this.classes.add(c); },
+      remove(c) { this.classes.delete(c); },
+    },
+    closest: () => wrapper,
+    parentElement: wrapper,
+  };
+
+  const copySnippet = evaluateFunction("copySnippet", {
+    document: mockDocument,
+    navigator: mockNavigator,
+    setTimeout: (fn) => fn(),
+    clearTimeout: () => {},
+  });
+
+  copySnippet(btn);
+
+  // Wait for rejected promise tick
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(execCommandCalled, "copy");
+  assert.equal(textareaValue, "tart run vm1");
+});
+
+test("filterHelp toggles visibility for both h2 and child h3 links in helpToc", () => {
+  function makeElement(tag, id, text) {
+    const el = {
+      nodeType: 1,
+      tagName: tag.toUpperCase(),
+      id,
+      textContent: text,
+      innerHTML: text,
+      style: {},
+      classList: {
+        classes: new Set(),
+        add(c) { this.classes.add(c); },
+        remove(c) { this.classes.delete(c); },
+        contains(c) { return this.classes.has(c); },
+      },
+      dataset: {},
+      querySelectorAll() { return []; },
+      querySelector() { return null; },
+    };
+    return el;
+  }
+
+  // Section 1 with H2 and H3
+  const h2Sec1 = makeElement("h2", "sec-quickstart", "Quickstart");
+  const h3Sec1 = makeElement("h3", "sec-quickstart-prereq", "Prerequisites");
+  const sec1 = makeElement("section", "sec-quickstart", "Quickstart content");
+  sec1.dataset.sectionId = "sec-quickstart";
+  sec1.querySelectorAll = () => [h2Sec1, h3Sec1];
+
+  // Section 2 with H2 and H3
+  const h2Sec2 = makeElement("h2", "sec-fleet", "Fleet Management");
+  const h3Sec2 = makeElement("h3", "sec-fleet-rotation", "Fleet Rotation");
+  const sec2 = makeElement("section", "sec-fleet", "Fleet rotation content");
+  sec2.dataset.sectionId = "sec-fleet";
+  sec2.querySelectorAll = () => [h2Sec2, h3Sec2];
+
+  // TOC links
+  const linkH2Sec1 = makeElement("a", "", "Quickstart");
+  const linkH3Sec1 = makeElement("a", "", "Prerequisites");
+  const linkH2Sec2 = makeElement("a", "", "Fleet Management");
+  const linkH3Sec2 = makeElement("a", "", "Fleet Rotation");
+
+  const tocMap = {
+    'a[href="#sec-quickstart"], [data-target="sec-quickstart"]': linkH2Sec1,
+    'a[href="#sec-quickstart-prereq"], [data-target="sec-quickstart-prereq"]': linkH3Sec1,
+    'a[href="#sec-fleet"], [data-target="sec-fleet"]': linkH2Sec2,
+    'a[href="#sec-fleet-rotation"], [data-target="sec-fleet-rotation"]': linkH3Sec2,
+  };
+
+  const toc = {
+    querySelectorAll: () => [linkH2Sec1, linkH3Sec1, linkH2Sec2, linkH3Sec2],
+    querySelector: (sel) => tocMap[sel] || null,
+  };
+
+  const content = {
+    querySelectorAll: (sel) => {
+      if (sel.includes(".help-section")) return [sec1, sec2];
+      return [];
+    },
+  };
+
+  const document = {
+    getElementById(id) {
+      if (id === "helpContent" || id === "readme") return content;
+      if (id === "helpToc") return toc;
+      return null;
+    },
+    createElement(tag) { return makeElement(tag, "", ""); },
+  };
+
+  const filterHelp = evaluateFunction("filterHelp", { document });
+
+  // Filter for "rotation" (matches only Sec 2)
+  filterHelp("rotation");
+
+  assert.equal(sec1.style.display, "none");
+  assert.equal(linkH2Sec1.style.display, "none");
+  assert.equal(linkH3Sec1.style.display, "none");
+
+  assert.equal(sec2.style.display, "");
+  assert.equal(linkH2Sec2.style.display, "");
+  assert.equal(linkH3Sec2.style.display, "");
+
+  // Clear query -> all restored
+  filterHelp("");
+  assert.equal(sec1.style.display, "");
+  assert.equal(linkH2Sec1.style.display, "");
+  assert.equal(linkH3Sec1.style.display, "");
+  assert.equal(sec2.style.display, "");
+  assert.equal(linkH2Sec2.style.display, "");
+  assert.equal(linkH3Sec2.style.display, "");
 });
