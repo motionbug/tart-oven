@@ -114,9 +114,9 @@ Tart Oven maintains a strict boundary between cached OCI registry base templates
 
 | Operating System | Recommended OCI Image Reference | Default Specs | Agent |
 |---|---|---|---|
-| **macOS 26 (Tahoe)** | `ghcr.io/cirruslabs/macos-tahoe-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
-| **macOS 15 (Sequoia)** | `ghcr.io/cirruslabs/macos-sequoia-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
-| **macOS 14 (Sonoma)** | `ghcr.io/cirruslabs/macos-sonoma-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
+| **macOS 26 (Tahoe)** | `ghcr.io/cirruslabs/macos-tahoe-base:latest` | 4 vCPU, 4 GB RAM | Preinstalled |
+| **macOS 15 (Sequoia)** | `ghcr.io/cirruslabs/macos-sequoia-base:latest` | 4 vCPU, 4 GB RAM | Preinstalled |
+| **macOS 14 (Sonoma)** | `ghcr.io/cirruslabs/macos-sonoma-base:latest` | 4 vCPU, 4 GB RAM | Preinstalled |
 
 ### The Golden Master Template Pattern
 
