@@ -1,7 +1,9 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.40 replaces the Jamf
-username line with a real MDM enrollment column. Version 1.39 fixes the guest
+This file records user-visible changes to Tart Oven. Version 1.50 introduces the
+guided First-Run Onboarding Wizard, direct in-app OCI base image pulling with live
+streaming progress, and a comprehensive 8-stage interactive Helper Guide. Version 1.40
+replaces the Jamf username line with a real MDM enrollment column. Version 1.39 fixes the guest
 agent installer against a real agentless VM. Version 1.38 makes the SSH
 fallback optional and adds a guest agent installer. Version 1.37 runs guest commands
 through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
@@ -15,6 +17,24 @@ hard stops for ephemeral testing farm workflows. Version 1.33 introduces
 robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
 Version 1.32 separates OCI images from runnable local VMs and excludes them from
 scheduling by default.
+
+## 1.50 — 2026-08-25
+
+### First-Run Onboarding Wizard & Guided Setup
+- **5-Step Interactive Stepper**: Walks first-time operators through hardware & Tart CLI verification, APFS storage confirmation, base image acquisition, operator persona configuration, and fleet launch.
+- **Empty-State Dashboard Hero Card**: Provides immediate guidance and quick action triggers (`Launch Setup Wizard`, `Pull Base Image`) when 0 local VMs are detected.
+- **Role-Based Presets**: Applies tailored defaults in one click for **🛠️ DevOps / CI** (headless on, audio off, sequential scheduling), **🍏 Jamf / Mac Admin** (random serial & MAC on, Jamf recon on, MDM column enabled), and **🧪 QA Tester** (GUI & audio on).
+- **Persistent State & Re-entry**: Persists `FirstRunCompleted` in `state.json` and adds a persistent `🚀 Setup Wizard` re-entry button in the header nav and Configuration tab.
+
+### Direct OCI Image Pulling
+- **In-App Pull Modal**: Added `#pullOciModal` dialog with curated one-click preset chips for **macOS 26 (Tahoe)**, **macOS 15 (Sequoia)**, and **macOS 14 (Sonoma)**, along with custom OCI registry URI inputs.
+- **Background Streaming Execution**: Executes `tart pull` asynchronously via `POST /api/oci/pull`, streaming live layer extraction logs over SSE into an in-modal terminal window across page reloads.
+- **APFS Preflight Disk Capacity Guard**: Prevents host disk exhaustion by verifying at least 25 GiB free disk space before initiating pulls.
+
+### 8-Stage Interactive Helper Guide Overhaul
+- **Restructured Technical Architecture**: Overhauled into 8 progressive stages covering orchestration value proposition, 5-minute quickstart, base image lifecycle, fleet operations & scheduling, Jamf Pro/MDM administration, host performance safeguards, REST/SSE API specifications, and 6 diagnostic runbooks.
+- **Mandatory Jamf Hardware Randomization Rules**: Documents the invariant rule that cloned VMs intended for MDM enrollment must have randomized serials and MACs (`tart set <vm> --random-serial --random-mac`) to prevent inventory overwrites.
+- **Interactive In-App Documentation Viewer**: Includes sticky Table of Contents sidebar with synchronized heading visibility, real-time XSS-safe search filtering, and 1-click clipboard copy buttons with LAN HTTP fallback.
 
 ## 1.40 — 2026-08-24
 

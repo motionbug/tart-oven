@@ -2,7 +2,7 @@
 
 A high-performance Go daemon and web orchestration platform for managing, monitoring, and scheduling macOS and Linux virtual machines on Apple Silicon using [Tart](https://tart.run) and Apple's native `Virtualization.framework`.
 
-Current release: **1.40**. [View Changelog](CHANGELOG.md) for full release notes and update details.
+Current release: **1.50**. [View Changelog](CHANGELOG.md) for full release notes and update details.
 
 ---
 
@@ -66,10 +66,10 @@ Get Tart Oven up and running with your first bootable macOS virtual machine in l
 You can install Tart Oven via the prebuilt signed macOS installer package or compile directly from source:
 
 #### Option A: macOS Installer Package (.pkg)
-Download `TartOven-1.40.pkg` and install via Terminal or Finder:
+Download `TartOven-1.50.pkg` and install via Terminal or Finder:
 
 ```sh
-sudo installer -pkg TartOven-1.40.pkg -target /
+sudo installer -pkg TartOven-1.50.pkg -target /
 ```
 
 This installs the binary to `/Library/Application Support/Tart Oven/tart-oven` and registers a user `LaunchAgent` at `~/Library/LaunchAgents/io.github.motionbug.tart-oven.plist`.

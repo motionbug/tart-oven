@@ -18,7 +18,7 @@
   ```
 - Deploy and upgrade the local installation:
   ```bash
-  sudo installer -pkg "./TartOven-1.40.pkg" -target /
+  sudo installer -pkg "./TartOven-1.50.pkg" -target /
   ```
 
 ## 4. End-to-End Verification on Live Server
