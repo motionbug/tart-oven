@@ -152,6 +152,146 @@
   }
   .theme-toggle:hover { border-color: var(--accent); background: var(--panel); }
 
+  
+  /* Help / Guide interactive viewer */
+  .help-panel { padding: 20px; }
+  .help-toolbar {
+    margin-bottom: 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .help-search-input {
+    flex: 1;
+    max-width: 480px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .help-search-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.2);
+  }
+  .help-layout {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+  }
+  .help-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 20px;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 12px;
+  }
+  .help-sidebar-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 10px;
+    padding: 0 6px;
+  }
+  .help-toc {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .toc-link {
+    display: block;
+    padding: 5px 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.4;
+    text-decoration: none;
+    border-radius: 5px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toc-link:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+    text-decoration: none;
+  }
+  [data-theme="light"] .toc-link:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+  .toc-link.toc-h2 {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .toc-link.toc-h3 {
+    padding-left: 18px;
+    font-size: 11.5px;
+  }
+  .help-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .help-section {
+    margin-bottom: 24px;
+  }
+  .help-section:last-child {
+    margin-bottom: 0;
+  }
+  .code-block-wrapper {
+    position: relative;
+    margin: 14px 0;
+  }
+  .code-block-wrapper pre.md-code {
+    margin: 0;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 500;
+    font-family: inherit;
+    padding: 3px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    z-index: 2;
+    user-select: none;
+  }
+  .copy-btn:hover {
+    background: var(--panel);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .copy-btn.copied {
+    color: var(--green);
+    border-color: var(--green);
+  }
+  mark.help-highlight {
+    background: rgba(255, 183, 77, 0.35);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+  @media (max-width: 768px) {
+    .help-layout { flex-direction: column; }
+    .help-sidebar { width: 100%; position: static; max-height: 200px; }
+  }
+
   /* markdown (Helper Guide) */
   .markdown { line-height: 1.65; font-size: 14.5px; }
   .markdown h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 22px 0 12px; }
@@ -864,12 +1004,23 @@
 
   <!-- ================= TAB 5: HELPER GUIDE ================= -->
   <div id="tab-guide" class="tab">
-    <div class="panel">
-      <div id="readme" class="markdown muted">Loading guide…</div>
+    <div class="panel help-panel">
+      <div class="help-toolbar">
+        <input type="search" id="helpSearch" class="help-search-input" placeholder="Search guide (e.g. Tart CLI, SSH, MDM, OCI, API)..." oninput="filterHelp(this.value)" autocomplete="off">
+      </div>
+      <div class="help-layout">
+        <aside class="help-sidebar">
+          <div class="help-sidebar-title">Table of Contents</div>
+          <nav id="helpToc" class="help-toc" aria-label="Table of contents"></nav>
+        </aside>
+        <div id="helpContent" class="markdown help-content">
+          <div id="readme" class="muted">Loading guide…</div>
+        </div>
+      </div>
     </div>
-</div>
+  </div>
 
-<!-- VM details edit modal (notes + tags) -->
+  <!-- VM details edit modal (notes + tags) -->
 <div id="notesModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-content">
@@ -999,10 +1150,11 @@ function connect() {
 // ---- tabs ----
 function showTab(id) {
   activeTab = id;
-  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + id));
-  document.querySelectorAll("nav.tabs .tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  const targetId = (id === "help" ? "guide" : id);
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + targetId || t.id === "tab-" + id));
+  document.querySelectorAll("nav.tabs .tabbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === targetId || b.dataset.tab === id));
   if (id === "logs") loadHistory();
-  if (id === "guide") loadReadme();
+  if (id === "guide" || id === "help") loadReadme();
   if (id === "performance") loadPerformance();
 }
 document.querySelectorAll("nav.tabs .tabbtn").forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -2631,38 +2783,52 @@ el("themeToggle").onclick = () =>
 
 // ---- Helper Guide (render embedded README.md) ----
 async function loadReadme() {
-  const el = document.getElementById("readme");
-  if (el.dataset.loaded) return;
+  const el = document.getElementById("helpContent") || document.getElementById("readme");
+  if (!el || el.dataset.loaded) return;
   try {
     const res = await api("/api/readme");
     el.classList.remove("muted");
     el.innerHTML = renderMarkdown(await res.text());
     el.dataset.loaded = "1";
-  } catch (e) { el.textContent = "Failed to load guide: " + e.message; }
+  } catch (e) {
+    if (el) el.textContent = "Failed to load guide: " + e.message;
+  }
 }
 
-// Compact Markdown → HTML renderer (headings, code fences, inline code, bold,
-// links, lists, tables, paragraphs) — enough for the README, no dependencies.
+function renderMarkdownGuide(rawMarkdown) {
+  return renderMarkdown(rawMarkdown);
+}
+
+// Compact Markdown → HTML renderer (headings with slug IDs, TOC generation,
+// code fences with copy buttons, inline code, bold, links, lists, tables, paragraphs)
 function renderMarkdown(md) {
   const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const inline = t => esc(t)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(new RegExp("`([^`]+)`", "g"), "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) => {
-      if (href === "CHANGELOG.md") return `<a href="/CHANGELOG.md" target="_blank" rel="noopener">${label}</a>`;
-      if (href.startsWith("#")) return `<a href="${href}">${label}</a>`;
-      return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+      if (href === "CHANGELOG.md") return '<a href="/CHANGELOG.md" target="_blank" rel="noopener">' + label + '</a>';
+      if (href.startsWith("#")) return '<a href="' + href + '">' + label + '</a>';
+      return '<a href="' + href + '" target="_blank" rel="noopener">' + label + '</a>';
     });
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   let out = "", i = 0;
+  const tocItems = [];
+  let inSection = false;
+
   while (i < lines.length) {
     const line = lines[i];
-    if (/^```/.test(line)) {
+    if (line.startsWith("```")) {
       i++; let code = "";
-      while (i < lines.length && !/^```/.test(lines[i])) { code += lines[i] + "\n"; i++; }
+      while (i < lines.length && !lines[i].startsWith("```")) { code += lines[i] + "\n"; i++; }
       i++;
-      out += '<pre class="md-code">' + esc(code.replace(/\n$/, "")) + "</pre>"; continue;
+      const cleanCode = code.replace(/\n$/, "");
+      out += '<div class="code-block-wrapper">' +
+        '<button class="copy-btn" title="Copy code" onclick="copySnippet(this)" aria-label="Copy code snippet">Copy</button>' +
+        '<pre class="md-code"><code>' + esc(cleanCode) + '</code></pre>' +
+        '</div>';
+      continue;
     }
     if (/^>\s+\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.test(line)) {
       const type = line.match(/^>\s+\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i)[1].toUpperCase();
@@ -2689,6 +2855,14 @@ function renderMarkdown(md) {
       const n = h[1].length;
       const title = h[2];
       const headingId = slug(title);
+      if (n === 2 || n === 3) {
+        tocItems.push({ id: headingId, title: title.replace(new RegExp("[*_`]", "g"), ""), level: n });
+      }
+      if (n === 2) {
+        if (inSection) out += '</section>';
+        out += '<section class="help-section" data-section-id="' + headingId + '">';
+        inSection = true;
+      }
       out += '<h' + n + ' id="' + headingId + '">' + inline(title) + '</h' + n + '>';
       i++;
       continue;
@@ -2705,10 +2879,168 @@ function renderMarkdown(md) {
     }
     if (line.trim() === "") { i++; continue; }
     let p = line; i++;
-    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s|^```|^>\s+\[!|^\s*[-*]\s+|^\s*\d+\.\s+/.test(lines[i]) && !lines[i].includes("|")) { p += " " + lines[i]; i++; }
+    while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,6})\s|^>\s+\[!|^\s*[-*]\s+|^\s*\d+\.\s+/.test(lines[i]) && !lines[i].startsWith("```") && !lines[i].includes("|")) { p += " " + lines[i]; i++; }
     out += "<p>" + inline(p) + "</p>";
   }
+  if (inSection) out += '</section>';
+
+  // Populate TOC in DOM if #helpToc exists
+  try {
+    if (typeof document !== "undefined" && document && document.getElementById) {
+      const toc = document.getElementById("helpToc");
+      if (toc && tocItems.length > 0) {
+        toc.innerHTML = tocItems.map(item =>
+          '<a href="#' + item.id + '" class="toc-link toc-h' + item.level + '" data-target="' + item.id + '">' + esc(item.title) + '</a>'
+        ).join("");
+      }
+    }
+  } catch (_) {}
+
   return out;
+}
+
+function copySnippet(btn) {
+  if (!btn) return "";
+  const wrapper = (btn.closest && btn.closest(".code-block-wrapper, .code-wrap, pre")) || btn.parentElement;
+  let codeEl = wrapper ? (wrapper.querySelector ? wrapper.querySelector("code, pre") : null) : null;
+  if (!codeEl && btn.nextElementSibling) {
+    codeEl = (btn.nextElementSibling.querySelector && btn.nextElementSibling.querySelector("code")) || btn.nextElementSibling;
+  }
+  let text = "";
+  if (codeEl) {
+    if (codeEl.contains && codeEl.contains(btn)) {
+      const clone = codeEl.cloneNode(true);
+      const btnInClone = clone.querySelector ? clone.querySelector(".copy-btn") : null;
+      if (btnInClone && btnInClone.remove) btnInClone.remove();
+      text = clone.innerText || clone.textContent || "";
+    } else {
+      text = codeEl.innerText || codeEl.textContent || "";
+    }
+  } else if (btn.dataset && btn.dataset.code) {
+    text = btn.dataset.code;
+  } else if (btn.previousElementSibling && (btn.previousElementSibling.tagName === "PRE" || btn.previousElementSibling.tagName === "CODE")) {
+    text = btn.previousElementSibling.innerText || btn.previousElementSibling.textContent || "";
+  }
+  
+  if (typeof navigator !== "undefined" && navigator && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(text);
+  }
+  
+  const origText = (btn.dataset && btn.dataset.origText) || btn.textContent || "Copy";
+  if (btn.dataset) btn.dataset.origText = origText;
+  btn.textContent = "✓ Copied";
+  if (btn.classList && btn.classList.add) btn.classList.add("copied");
+  
+  if (btn._copyTimeout) clearTimeout(btn._copyTimeout);
+  btn._copyTimeout = setTimeout(() => {
+    btn.textContent = origText;
+    if (btn.classList && btn.classList.remove) btn.classList.remove("copied");
+    delete btn._copyTimeout;
+  }, 2000);
+  
+  return text;
+}
+
+function filterHelp(query) {
+  const container = (typeof document !== "undefined" && document && document.getElementById)
+    ? (document.getElementById("helpContent") || document.getElementById("readme"))
+    : null;
+  if (!container) return 0;
+  const toc = (typeof document !== "undefined" && document && document.getElementById) ? document.getElementById("helpToc") : null;
+  const q = String(query || "").trim().toLowerCase();
+
+  let sections = container.querySelectorAll ? container.querySelectorAll(".help-section") : [];
+  if (!sections || sections.length === 0) {
+    sections = container.querySelectorAll ? container.querySelectorAll("h1, h2, h3, p, pre, .code-block-wrapper, table, .callout, ul, ol") : [];
+  }
+
+  const tocLinks = toc && toc.querySelectorAll ? toc.querySelectorAll(".toc-link, a") : [];
+
+  if (!q) {
+    sections.forEach(sec => {
+      if (sec.style) sec.style.display = "";
+      if (sec.classList && sec.classList.remove) sec.classList.remove("hidden");
+      if (sec._rawHtml) {
+        sec.innerHTML = sec._rawHtml;
+        delete sec._rawHtml;
+      }
+    });
+    if (tocLinks && tocLinks.length > 0) {
+      tocLinks.forEach(link => {
+        if (link.style) link.style.display = "";
+        if (link.classList && link.classList.remove) link.classList.remove("hidden");
+      });
+    }
+    return sections.length;
+  }
+
+  const terms = q.split(/\s+/).filter(Boolean);
+  const escRegex = s => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const pattern = new RegExp("(" + terms.map(escRegex).join("|") + ")", "gi");
+
+  function highlightNode(node) {
+    if (node.nodeType === 3) {
+      const val = node.nodeValue;
+      if (val && pattern.test(val)) {
+        pattern.lastIndex = 0;
+        if (typeof document !== "undefined" && document && document.createElement) {
+          const span = document.createElement("span");
+          span.innerHTML = val.replace(pattern, '<mark class="help-highlight">$1</mark>');
+          if (node.parentNode) {
+            node.parentNode.replaceChild(span, node);
+          }
+        }
+      }
+    } else if (node.nodeType === 1) {
+      if (node.tagName !== "SCRIPT" && node.tagName !== "STYLE" && node.tagName !== "MARK" && !(node.classList && node.classList.contains("copy-btn"))) {
+        if (node.childNodes) {
+          Array.from(node.childNodes).forEach(highlightNode);
+        }
+      }
+    }
+  }
+
+  let matchCount = 0;
+  sections.forEach(sec => {
+    if (!sec._rawHtml) {
+      sec._rawHtml = sec.innerHTML;
+    } else {
+      sec.innerHTML = sec._rawHtml;
+    }
+
+    const text = (sec.textContent || "").toLowerCase();
+    const matches = terms.every(term => text.includes(term));
+    const sectionId = (sec.dataset && sec.dataset.sectionId) || (sec.querySelector && sec.querySelector("h2, h3") ? sec.querySelector("h2, h3").id : sec.id);
+
+    if (matches) {
+      if (sec.style) sec.style.display = "";
+      if (sec.classList && sec.classList.remove) sec.classList.remove("hidden");
+      matchCount++;
+
+      highlightNode(sec);
+
+      if (toc && sectionId && toc.querySelector) {
+        const link = toc.querySelector('a[href="#' + sectionId + '"], [data-target="' + sectionId + '"]');
+        if (link) {
+          if (link.style) link.style.display = "";
+          if (link.classList && link.classList.remove) link.classList.remove("hidden");
+        }
+      }
+    } else {
+      if (sec.style) sec.style.display = "none";
+      if (sec.classList && sec.classList.add) sec.classList.add("hidden");
+
+      if (toc && sectionId && toc.querySelector) {
+        const link = toc.querySelector('a[href="#' + sectionId + '"], [data-target="' + sectionId + '"]');
+        if (link) {
+          if (link.style) link.style.display = "none";
+          if (link.classList && link.classList.add) link.classList.add("hidden");
+        }
+      }
+    }
+  });
+
+  return matchCount;
 }
 
 updateCreateMode();

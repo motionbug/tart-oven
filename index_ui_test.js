@@ -543,3 +543,222 @@ test("submitOciPull handles text/plain and json error responses gracefully", asy
   assert.equal(toasts[0].title, "OCI Pull Failed");
   assert.equal(toasts[0].msg, "insufficient disk space");
 });
+
+test("Help tab contains interactive TOC sidebar, search input, and copy buttons", () => {
+  const requiredElements = [
+    'id="helpToc"',
+    'id="helpSearch"',
+    'id="helpContent"',
+    'class="copy-btn"',
+  ];
+  for (const el of requiredElements) {
+    assert.ok(html.includes(el), `index.html missing element ${el}`);
+  }
+});
+
+test("renderMarkdown generates slug heading IDs, TOC items in helpToc, and code copy buttons", () => {
+  const tocElement = { innerHTML: "" };
+  const document = {
+    getElementById(id) {
+      if (id === "helpToc") return tocElement;
+      return null;
+    },
+  };
+
+  const renderMarkdown = evaluateFunction("renderMarkdown", { document });
+  const rawMd = "# Title\n\n## Stage 1: Quickstart\n\nSome intro text.\n\n### Tart CLI Setup\n\n```sh\ntart clone base vm1\n```\n\n## Stage 2: Fleet Management\n\nFleet details.";
+  const result = renderMarkdown(rawMd);
+
+  // Verify slug heading IDs
+  assert.match(result, /<h2 id="stage-1-quickstart">Stage 1: Quickstart<\/h2>/);
+  assert.match(result, /<h3 id="tart-cli-setup">Tart CLI Setup<\/h3>/);
+  assert.match(result, /<h2 id="stage-2-fleet-management">Stage 2: Fleet Management<\/h2>/);
+
+  // Verify code block has copy button wrapper
+  assert.match(result, /class="copy-btn"/);
+  assert.match(result, /onclick="copySnippet\(this\)"/);
+  assert.match(result, /tart clone base vm1/);
+
+  // Verify helpToc was populated
+  assert.match(tocElement.innerHTML, /href="#stage-1-quickstart"/);
+  assert.match(tocElement.innerHTML, /href="#tart-cli-setup"/);
+  assert.match(tocElement.innerHTML, /href="#stage-2-fleet-management"/);
+});
+
+test("filterHelp filters rendered sections and highlights search terms", () => {
+  function makeElement(tag, text, initialHtml) {
+    const el = {
+      tagName: tag.toUpperCase(),
+      textContent: text,
+      innerHTML: initialHtml || text,
+      style: {},
+      classList: {
+        classes: new Set(),
+        add(c) { this.classes.add(c); },
+        remove(c) { this.classes.delete(c); },
+        contains(c) { return this.classes.has(c); },
+      },
+      childNodes: [],
+      parentNode: null,
+      dataset: {},
+      querySelector() { return null; },
+    };
+    return el;
+  }
+
+  const sec1 = makeElement("section", "Stage 1 Quickstart Guide for Tart CLI setup", "<h2>Stage 1</h2><p>Quickstart Guide for Tart CLI setup</p>");
+  sec1.dataset.sectionId = "stage-1";
+  const sec2 = makeElement("section", "Stage 5 Jamf Pro MDM Administrator Toolkit", "<h2>Stage 5</h2><p>Jamf Pro MDM Administrator Toolkit</p>");
+  sec2.dataset.sectionId = "stage-5";
+
+  const tocLink1 = makeElement("a", "Stage 1", "<a href=\"#stage-1\">Stage 1</a>");
+  const tocLink2 = makeElement("a", "Stage 5", "<a href=\"#stage-5\">Stage 5</a>");
+
+  const content = {
+    querySelectorAll(selector) {
+      if (selector.includes(".help-section")) return [sec1, sec2];
+      return [];
+    },
+  };
+  const toc = {
+    querySelectorAll() { return [tocLink1, tocLink2]; },
+    querySelector(selector) {
+      if (selector.includes("stage-1")) return tocLink1;
+      if (selector.includes("stage-5")) return tocLink2;
+      return null;
+    },
+  };
+
+  const document = {
+    getElementById(id) {
+      if (id === "helpContent" || id === "readme") return content;
+      if (id === "helpToc") return toc;
+      return null;
+    },
+    createElement(tag) {
+      return makeElement(tag, "", "");
+    },
+  };
+
+  const filterHelp = evaluateFunction("filterHelp", { document });
+
+  // Filter for "Jamf"
+  filterHelp("Jamf");
+  assert.equal(sec1.style.display, "none", "sec1 should be hidden");
+  assert.equal(sec2.style.display, "", "sec2 should be visible");
+  assert.equal(tocLink1.style.display, "none", "tocLink1 should be hidden");
+  assert.equal(tocLink2.style.display, "", "tocLink2 should be visible");
+
+  // Clear query
+  filterHelp("");
+  assert.equal(sec1.style.display, "", "sec1 should be restored");
+  assert.equal(sec2.style.display, "", "sec2 should be restored");
+  assert.equal(tocLink1.style.display, "", "tocLink1 should be restored");
+  assert.equal(tocLink2.style.display, "", "tocLink2 should be restored");
+});
+
+test("copySnippet copies code block text and shows temporary feedback", () => {
+  let copiedText = "";
+  const mockNavigator = {
+    clipboard: {
+      writeText: async (t) => { copiedText = t; },
+    },
+  };
+
+  const codeEl = {
+    textContent: "tart set vm1 --cpu 4 --memory 8192",
+    innerText: "tart set vm1 --cpu 4 --memory 8192",
+  };
+  const wrapper = {
+    querySelector: (sel) => {
+      if (sel.includes("code") || sel.includes("pre")) return codeEl;
+      return null;
+    },
+  };
+  const btn = {
+    textContent: "Copy",
+    dataset: {},
+    classList: {
+      classes: new Set(),
+      add(c) { this.classes.add(c); },
+      remove(c) { this.classes.delete(c); },
+    },
+    closest: (sel) => wrapper,
+    parentElement: wrapper,
+  };
+
+  let scheduledMs = 0;
+  let scheduledCallback = null;
+  const mockSetTimeout = (fn, ms) => {
+    scheduledMs = ms;
+    scheduledCallback = fn;
+    return 123;
+  };
+
+  const copySnippet = evaluateFunction("copySnippet", {
+    navigator: mockNavigator,
+    setTimeout: mockSetTimeout,
+    clearTimeout: () => {},
+  });
+
+  copySnippet(btn);
+
+  assert.equal(copiedText, "tart set vm1 --cpu 4 --memory 8192");
+  assert.equal(btn.textContent, "✓ Copied");
+  assert.equal(btn.classList.classes.has("copied"), true);
+  assert.equal(scheduledMs, 2000);
+
+  // Trigger timeout callback to restore
+  scheduledCallback();
+  assert.equal(btn.textContent, "Copy");
+  assert.equal(btn.classList.classes.has("copied"), false);
+});
+
+test("renderMarkdownGuide alias behaves identically to renderMarkdown", () => {
+  const document = { getElementById: () => null };
+  const renderMarkdownGuide = evaluateFunction("renderMarkdownGuide", {
+    renderMarkdown: evaluateFunction("renderMarkdown", { document }),
+  });
+  const md = "## Stage 3: Base Images\n\nPulling Sequoia 15 image.\n\n```bash\ntart pull ghcr.io/cirruslabs/macos-sequoia-base:latest\n```";
+  const output = renderMarkdownGuide(md);
+  assert.match(output, /<h2 id="stage-3-base-images">Stage 3: Base Images<\/h2>/);
+  assert.match(output, /class="copy-btn"/);
+  assert.match(output, /macos-sequoia-base/);
+});
+
+test("showTab switches tab state and loads readme for help and guide aliases", () => {
+  let readmeLoaded = 0;
+  const tabs = [
+    { id: "tab-dashboard", classList: { classes: new Set(["active"]), toggle(c, v) { if (v) this.classes.add(c); else this.classes.delete(c); } } },
+    { id: "tab-guide", classList: { classes: new Set(), toggle(c, v) { if (v) this.classes.add(c); else this.classes.delete(c); } } },
+  ];
+  const buttons = [
+    { dataset: { tab: "dashboard" }, classList: { classes: new Set(["active"]), toggle(c, v) { if (v) this.classes.add(c); else this.classes.delete(c); } } },
+    { dataset: { tab: "guide" }, classList: { classes: new Set(), toggle(c, v) { if (v) this.classes.add(c); else this.classes.delete(c); } } },
+  ];
+
+  const document = {
+    querySelectorAll(sel) {
+      if (sel === ".tab") return tabs;
+      if (sel === "nav.tabs .tabbtn") return buttons;
+      return [];
+    },
+  };
+
+  const showTab = evaluateFunction("showTab", {
+    document,
+    loadHistory: () => {},
+    loadReadme: () => { readmeLoaded++; },
+    loadPerformance: () => {},
+  });
+
+  showTab("guide");
+  assert.equal(tabs[1].classList.classes.has("active"), true);
+  assert.equal(buttons[1].classList.classes.has("active"), true);
+  assert.equal(readmeLoaded, 1);
+
+  showTab("help");
+  assert.equal(tabs[1].classList.classes.has("active"), true);
+  assert.equal(buttons[1].classList.classes.has("active"), true);
+  assert.equal(readmeLoaded, 2);
+});
