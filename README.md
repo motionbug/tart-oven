@@ -108,7 +108,7 @@ Navigate to `http://127.0.0.1:9000` in your web browser. If launching for the fi
 
 ## Stage 3: Base Image Management & OCI Registry Workflow
 
-Tart Oven maintains a strict boundary between cached OCI registry base templates and runnable local virtual machines.
+Tart Oven maintains a strict separation between immutable OCI registry base images and mutable, runnable local virtual machines.
 
 ### Curated macOS Base Images
 
@@ -118,29 +118,78 @@ Tart Oven maintains a strict boundary between cached OCI registry base templates
 | **macOS 15 (Sequoia)** | `ghcr.io/cirruslabs/macos-sequoia-base:latest` | 4 vCPU, 4 GB RAM | Preinstalled |
 | **macOS 14 (Sonoma)** | `ghcr.io/cirruslabs/macos-sonoma-base:latest` | 4 vCPU, 4 GB RAM | Preinstalled |
 
-### The Golden Master Template Pattern
+### Guest Command Execution & Agent Architecture
 
-To minimize disk usage and provisioning overhead across your fleet:
+Tart Oven communicates with guest virtual machines using a robust dual-path subsystem:
 
-1. **Pull Base Image**: Pull a pristine base image from GHCR or your internal OCI registry.
-2. **Create Master Template Clone**: Clone the OCI base into a local template VM (e.g. `tmpl-sequoia-qa`).
-3. **Customize & Pre-configure**: Boot `tmpl-sequoia-qa`, install Xcode command line tools, developer SDKs, certificates, or tools, and shut it down.
-4. **Fast-Clone Fleet Instances**: Clone `tmpl-sequoia-qa` into multiple operational VMs (`qa-01`, `qa-02`, etc.) using APFS copy-on-write cloning.
+1. **Primary — Tart Guest Agent (`virtio-vsock`)**:
+   - Official Cirrus Labs base images come with `tart-guest-agent` pre-installed and running out of the box.
+   - Communicates directly over high-speed virtual sockets (`virtio-vsock`), requiring zero network IP configuration, zero SSH credentials, and no SSH daemon startup delays.
+   - Powers instant **Get Info**, hostname/serial queries, and automated shell command execution.
+2. **Fallback — Guest SSH Subsystem**:
+   - For custom IPSW installations, older macOS releases, or Linux distributions lacking the guest agent, Tart Oven automatically falls back to SSH.
+   - Uses configured credentials (default user: `admin`, password: `admin`, key: `~/.ssh/tart-oven` or `~/.ssh/id_ed25519`).
+   - Operators can install the official guest agent onto any custom VM in one click using Tart Oven's **Install Guest Agent** button in VM Management.
+
+### The Golden Master Template Pattern (Tart Oven Workflow)
+
+To maximize provisioning speed, preserve disk space, and streamline MDM testing across your fleet:
+
+```
+┌─────────────────────────┐       ┌─────────────────────────┐       ┌─────────────────────────┐
+│ 1. Pull OCI Base Image  │ ───►  │ 2. Create Master Clone  │ ───►  │ 3. Pre-Configure & Stage│
+│    Tahoe / Sequoia /    │       │    Clone base into      │       │    Setup SSH keys, apps,│
+│    Sonoma via Web UI    │       │    Golden Master VM     │       │    stage MDM profile    │
+└─────────────────────────┘       └─────────────────────────┘       └─────────────────────────┘
+                                                                                 │
+                                                                                 │ (Do NOT enroll template!)
+                                                                                 ▼
+┌─────────────────────────┐       ┌─────────────────────────┐       ┌─────────────────────────┐
+│ 5. Distinct MDM Records │ ◄───  │ 5. Boot Clones & Enroll │ ◄───  │ 4. Fast APFS Batch Clone│
+│    Each VM registers    │       │    Run staged profile;  │       │    Clone to N fleet VMs │
+│    as a unique device   │       │    unique Serial & MAC  │       │    with Random Serial   │
+└─────────────────────────┘       └─────────────────────────┘       │    & MAC flags enabled  │
+                                                                    └─────────────────────────┘
+```
+
+#### Step-by-Step Golden Master Workflow:
+
+1. **Pull Base Image via Tart Oven**:
+   - In the **Dashboard** or **VM Management**, click **`[ ⇩ Pull OCI Image ]`** (or select a preset chip: Tahoe 26, Sequoia 15, Sonoma 14). Tart Oven downloads and extracts the image asynchronously with live SSE progress logs.
+2. **Clone into Master Template**:
+   - In Tart Oven's VM table, click **Clone** next to the base image to create your local template VM (e.g. `tmpl-sequoia-master` or `tmpl-jamf-master`).
+3. **Pre-Configure Credentials & Stage MDM Enrollment Profile**:
+   - Boot the template VM via the Tart Oven dashboard and connect via **Screen Sharing** (`vnc://admin@<vm-ip>`) or SSH.
+   - Verify SSH access and credentials (`admin` user).
+   - Use Tart Oven's built-in **Jamf Pro / MDM Staging Tool** (`VM Management ➜ Prepare base VM for Jamf`) to generate and upload `mdm_enroll.mobileconfig` directly onto the template Desktop via SFTP.
+   - Install required developer tools, SDKs, or root certificates.
+   - **Crucial**: **Do NOT enroll the master template.** Shut down the template VM cleanly.
+4. **Fast-Clone Fleet Instances with Hardware Randomization**:
+   - In Tart Oven, clone the template into multiple operational fleet VMs (`runner-01`, `runner-02`, etc.) using APFS copy-on-write cloning.
+   - Ensure **Randomize Serial Number** (`randomSerial: true`) and **Randomize MAC Address** (`randomMac: true`) are checked. Tart Oven orchestrates both cloning and hardware randomization in one operation.
+5. **Instant Independent Enrollment on Boot**:
+   - As each cloned instance boots, it possesses a completely unique hardware serial number and MAC address.
+   - Run the staged enrollment profile. Each clone registers in Jamf Pro / MDM as a completely distinct device record with zero collisions.
+
+#### CLI Equivalence (for Terminal Automation Scripts):
 
 ```sh
-# Pull base image via Tart CLI or Web UI
+# 1. Pull base image
 tart pull ghcr.io/cirruslabs/macos-sequoia-base:latest
 
-# Clone base into golden master template
-tart clone ghcr.io/cirruslabs/macos-sequoia-base:latest tmpl-sequoia-qa
+# 2. Clone base into golden master template
+tart clone ghcr.io/cirruslabs/macos-sequoia-base:latest tmpl-sequoia-master
 
-# Provision operational instance with hardware configuration
-tart clone tmpl-sequoia-qa runner-01
-tart set runner-01 --cpu 6 --memory 12288 --disk-size 60
+# 3. Boot template, pre-configure credentials & stage MDM profile, then shut down
+# (Or use Tart Oven Web UI to copy profile via SFTP automatically)
+
+# 4. Provision operational clones with hardware customization and randomization
+tart clone tmpl-sequoia-master runner-01
+tart set runner-01 --cpu 4 --memory 8192 --disk-size 50 --random-serial --random-mac
 ```
 
 > [!TIP]
-> **APFS Instant Cloning**: On macOS APFS volumes, cloning a 50 GiB VM template takes under 2 seconds and consumes zero initial storage, referencing shared base data until blocks are modified.
+> **APFS Copy-on-Write Speed**: On Apple Silicon APFS storage, cloning a 50 GiB master template takes under 2 seconds and consumes zero initial storage, referencing shared base blocks until modified by the guest.
 
 ---
 
@@ -171,12 +220,6 @@ Clicking **Screen** on any running VM opens macOS native Screen Sharing via the 
 - Default credentials for Cirrus Labs base images: User: `admin`, Password: `admin`.
 - Operates over the local bridge network between host and guest.
 
-### Guest Command Execution & Agent Architecture
-
-Tart Oven executes guest operations using a dual-path engine:
-1. **Primary: Tart Guest Agent**: Communicates directly through a virtual socket (`virtio-vsock`). High-speed, zero-network dependency, no SSH daemon or SSH credentials required.
-2. **Fallback: Guest SSH**: For VMs lacking the agent (e.g. custom IPSW installs), commands execute over SSH using the configured SSH user, password, and private key identity file (`~/.ssh/id_ed25519`).
-
 ---
 
 ## Stage 5: Jamf Pro & MDM Administrator Toolkit
@@ -190,55 +233,46 @@ The Dashboard features a dedicated **MDM** status column reporting each guest's 
 - 🔴 **Red (Unenrolled)**: Confirms the guest is running but no active MDM enrollment profile is installed.
 - ⚪ **Grey (Unprobed)**: The VM has not been booted or probed yet.
 
-### The Invariant Rule: Mandatory Hardware Randomization for MDM Cloning
+### Mandatory Hardware Randomization for MDM Cloning
 
 > [!IMPORTANT]
-> **MANDATORY MDM CLONING RULE**:
+> ### Invariant Rule: Always Randomize Serial Number & MAC Address When Cloning for MDM
 > Whenever you clone a base VM or template for Jamf Pro / MDM enrollment testing, you **MUST ALWAYS** enable `--random-serial` and `--random-mac`.
 >
-> In the CLI:
+> #### In Tart Oven Web UI & Backend API:
+> Tart Oven automates this seamlessly. In the **Clone VM** or **Batch Clone** modal, simply ensure **Randomize Serial Number** and **Randomize MAC Address** (`randomSerial: true`, `randomMac: true`) are checked. Tart Oven automatically executes the complete two-step provisioning sequence (`tart clone` followed by `tart set --random-serial --random-mac`) per cloned instance in the background.
+>
+> #### In the Tart CLI:
+> In the CLI, cloning and randomization are performed in two separate sequential commands:
 > ```sh
 > # Step 1: Clone the base template
-> tart clone base-jamf-template enrolled-vm-01
+> tart clone tmpl-jamf-master enrolled-vm-01
 >
 > # Step 2: Randomize hardware serial number and MAC address
 > tart set enrolled-vm-01 --random-serial --random-mac
 > ```
->
-> *Note: In Tart CLI, cloning and randomization are performed in two commands (`tart clone` followed by `tart set --random-serial --random-mac`). In the Tart Oven Web UI and backend API (`POST /api/vm/create`), both steps are performed automatically in one click whenever **Randomize Serial Number** and **Randomize MAC Address** (`randomSerial: true`, `randomMac: true`) are selected.*
 
-#### Why Hardware Randomization is Critical for MDM
+#### Why Hardware Randomization is Critical for Jamf Pro & MDM
 
-Apple MDM frameworks and Jamf Pro uniquely index, bind, and track managed endpoints by hardware **Serial Number** and **MAC Address**:
-1. **Serial Number Collision**: If multiple VMs share the same hardware serial number, Jamf Pro treats incoming check-ins as the *same device*. Each check-in overwrites previous inventory records, creating inventory flapping and ghost status reports.
-2. **MDM Identity Certificate Collisions**: Enrolling a duplicate serial number revokes or invalidates the APNs push token and SCEP machine certificates of earlier clones.
-3. **Network DHCP Lease Clashes**: Duplicate MAC addresses cause DHCP IP assignment collisions on local bridge networks.
+Apple MDM protocols and Jamf Pro uniquely index, bind, and track managed macOS endpoints by hardware **Serial Number**, **Hardware UUID**, and **MAC Address**:
+
+1. **Jamf Device Record Collisions & Inventory Flapping**:
+   - If multiple VMs share the same hardware serial number, Jamf Pro treats incoming check-ins from different VMs as the *exact same computer record*.
+   - Each VM's inventory update overwrites the previous VM's record (swapping IP addresses, installed applications, and computer names back and forth).
+2. **MDM Identity Certificate & APNs Invalidation**:
+   - During enrollment, Jamf Pro issues a unique SCEP machine certificate and APNs push token tied to the hardware serial.
+   - Enrolling a second VM with an identical serial immediately revokes or invalidates the APNs token and MDM identity certificates of all prior clones, breaking remote management commands (`recon`, `jamf policy`, config profile pushes).
+3. **Bridge Network DHCP Lease Clashes**:
+   - Duplicate MAC addresses cause DHCP IP assignment collisions and ARP poisoning on local bridge networks.
 
 ### Staging Jamf Enrollment Profiles to Base VM
 
-Tart Oven can automatically stage an enrollment invitation profile onto a base template Desktop:
+Tart Oven automates staging multi-use enrollment invitation profiles directly onto template VMs:
 
-```
-┌────────────────────────┐      ┌────────────────────────┐      ┌────────────────────────┐
-│  1. Jamf Pro Server    │ ───► │  2. Tart Oven Daemon   │ ───► │ 3. Base VM Desktop     │
-│  Create Multi-Use      │      │  Fetch & Generate      │      │ Upload mdm_enroll      │
-│  Enrollment Invitation │      │  mobileconfig Payload  │      │ via SFTP (Do NOT run)  │
-└────────────────────────┘      └────────────────────────┘      └────────────────────────┘
-                                                                             │
-                                                                             ▼
-                                                                ┌────────────────────────┐
-                                                                │ 4. Clone for Users     │
-                                                                │ tart clone             │
-                                                                │ tart set               │
-                                                                │  --random-serial       │
-                                                                │  --random-mac          │
-                                                                └────────────────────────┘
-```
-
-1. In Jamf Pro, go to **Computers → Enrollment Invitations**, create a multi-use invitation, and copy the `INVITATION_ID`.
+1. In Jamf Pro, navigate to **Computers → Enrollment Invitations**, create a multi-use invitation, and copy the `INVITATION_ID`.
 2. In Tart Oven under **VM Management → Prepare base VM for Jamf**, enter your Jamf Base URL (`https://tenant.jamfcloud.com`), Invitation ID, and base VM credentials.
-3. Click **Copy profile to Desktop**. Tart Oven generates `mdm_enroll.mobileconfig`, uploads it via SFTP, and validates the file signature.
-4. **Do not enroll the base template.** Shut down the base VM and clone individual testing instances with `--random-serial` and `--random-mac`.
+3. Click **Copy profile to Desktop**. Tart Oven fetches `mdm_enroll.mobileconfig`, uploads it via SFTP, and validates the file signature.
+4. **Do not enroll the master template.** Shut down the base VM and clone individual testing instances with **Randomize Serial Number** and **Randomize MAC Address** enabled.
 
 ---
 
