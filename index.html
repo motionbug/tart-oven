@@ -137,7 +137,7 @@
   .stat-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--grey); }
   .stat-val { font-size: 15.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
   .mdm-label { font-size: 13px; color: var(--muted); margin-left: 4px; vertical-align: middle; }
-  .mdm-url { font-size: 13px; color: var(--muted); font-family: ui-monospace, Menlo, Monaco, monospace; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+  .mdm-url { font-size: 13px; color: var(--muted); font-family: ui-monospace, Menlo, Monaco, monospace; overflow: hidden; text-overflow: ellipsis; max-width: 185px; white-space: nowrap; }
   .via-tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--grey); margin-left: 6px; vertical-align: middle; background: var(--panel2); padding: 2px 6px; border-radius: 4px; }
   .theme-toggle {
     background: var(--panel2);
@@ -332,7 +332,7 @@
   .cmd code { font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 13px; color: var(--text); white-space: pre-wrap; word-break: break-all; flex: 1; line-height: 1.45; }
   .cmd button { padding: 5px 12px; font-size: 12px; flex: none; border-radius: 5px; }
 
-  .wrap { max-width: 1440px; margin: 0 auto; padding: 22px 26px 60px; }
+  .wrap { max-width: 1600px; margin: 0 auto; padding: 22px 26px 60px; }
   .banner {
     border-radius: 8px; padding: 13px 18px; margin-bottom: 18px; font-weight: 500; font-size: 14px;
     display: flex; align-items: center; gap: 12px;
@@ -479,13 +479,14 @@
   tr:hover td { background: var(--panel2); }
   tr.row-running td { background: rgba(16, 185, 129, 0.04); }
   tr.row-running:hover td { background: rgba(16, 185, 129, 0.08); }
-  td.name { width: 220px; max-width: 240px; word-break: break-all; }
-  td.name b { font-weight: 600; font-size: 15px; }
+  td.name { width: 200px; min-width: 172px; max-width: 260px; word-break: normal; overflow-wrap: break-word; }
+  td.name b { font-weight: 600; font-size: 14px; line-height: 1.35; }
   td.acts { white-space: nowrap; width: 1%; text-align: right; }
-  td.info { width: 220px; max-width: 240px; }
+  td.info { width: 200px; min-width: 170px; max-width: 220px; }
+  td.mdm { min-width: 160px; max-width: 200px; }
   td.notes { max-width: 160px; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   td[data-state="running"] { color: var(--green); font-weight: 600; }
-  .infobox { font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 13px; line-height: 1.4; white-space: pre-wrap; max-height: 72px; overflow: auto; color: var(--muted); }
+  .infobox { font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; max-height: 72px; overflow: auto; color: var(--muted); }
   .state { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; padding: 3px 9px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--border); }
   .state .dot { width: 8px; height: 8px; border-radius: 50%; }
   .s-running  { color: var(--green); border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08); font-weight: 600; }
@@ -507,12 +508,12 @@
   .pill { font-size: 13px; font-weight: 500; padding: 3px 11px; border-radius: 9999px; border: 1px solid var(--border); color: var(--muted); }
   .pill.scheduler { color: var(--accent); background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25); }
   .pill.manual { color: var(--amber); background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.25); }
-  .row-actions { display: flex; gap: 5px; flex-wrap: nowrap; justify-content: flex-end; align-items: center; }
-  .row-actions button { padding: 5px 11px; font-size: 13px; font-weight: 500; border-radius: 5px; height: 30px; white-space: nowrap; }
+  .row-actions { display: flex; gap: 4px; flex-wrap: nowrap; justify-content: flex-end; align-items: center; }
+  .row-actions button { padding: 4px 10px; font-size: 12.5px; font-weight: 500; border-radius: 5px; height: 28px; white-space: nowrap; }
   .row-actions button.vnc { background: transparent; border: 1px solid rgba(59, 130, 246, 0.4); color: var(--accent); }
   .row-actions button.vnc:hover:not(:disabled) { background: rgba(59, 130, 246, 0.12); border-color: var(--accent); }
   .err { color: var(--red); font-size: 13px; }
-  .ip { font-family: ui-monospace, Menlo, Monaco, monospace; color: var(--accent); font-size: 13.5px; }
+  .ip { font-family: ui-monospace, Menlo, Monaco, monospace; color: var(--accent); font-size: 13px; }
   .mono { font-family: ui-monospace, Menlo, Monaco, monospace; }
   .muted { color: var(--muted); }
   .ssh-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
