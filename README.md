@@ -1,223 +1,450 @@
-# Tart Oven - An all-in-one VM management and orchestration server for macOS
+# Tart Oven - All-in-One macOS & Linux VM Orchestration Platform
 
-A single Go binary that manages, monitors, and schedules macOS and Linux virtual machines running
-under [Tart](https://tart.run) on Apple Silicon Mac computers, serving a live web dashboard to
-control and monitor them.
-
-This VM orchestration server fully relies on Tart and Apple's native `Virtualization.framework`.
+A high-performance Go daemon and web orchestration platform for managing, monitoring, and scheduling macOS and Linux virtual machines on Apple Silicon using [Tart](https://tart.run) and Apple's native `Virtualization.framework`.
 
 Current release: **1.40**. [View Changelog](CHANGELOG.md) for full release notes and update details.
 
 ---
 
-## 1. What Tart Oven Does
+## Table of Contents
 
-- **Automated VM Scheduler** — Run virtual machines for a configurable time window according to intervals and daily working hours. Outside working hours, Tart Oven automatically shuts down running VMs. Selection modes include *Random* and *Sequential* (round-robin). Cached OCI images are excluded from scheduling by default so only runnable local clones are scheduled.
-- **Full VM Lifecycle Controls** — Run, Stop (fast direct hard stop), Restart, Send command, Get info, and Screen (direct macOS Screen Sharing). Commands run through the Tart guest agent when the guest has one, falling back to SSH otherwise.
-- **Local VM & OCI Image Separation** — The Dashboard clearly separates runnable local VMs from cached OCI registry base images, carrying Tart's source and storage metadata through the UI and API.
-- **Native Host Performance Monitoring** — Inspect real-time host CPU usage, physical RAM, Darwin kernel memory pressure, disk capacity, and I/O throughput alongside 24 hours of in-memory charts.
-- **Kernel Memory Safeguards** — Automatically defer new VM starts while macOS reports critical memory pressure (`kern.memorystatus_vm_pressure_level`), preventing host instability. Periodically scavenges unused Go heap pages back to macOS.
-- **VM Management** — Detects local Tart installations (with one-click auto-install if missing), creates new VMs from IPSW images or clones existing templates, and reconfigures CPU, RAM, disk, display, MAC, and serial numbers.
-- **Execution & Audit History** — Every VM run, boot probe, and background task is recorded in a searchable rolling log with 60-day default retention.
-
----
-
-## 2. Local VMs and OCI Base Images
-
-Tart's storage contains two distinct kinds of items:
-
-- **Local VMs**: Independent, bootable virtual machines stored in `TART_HOME`. You can run, stop, inspect, edit, rename, and delete these machines.
-- **OCI Images**: Cached container registry base images (e.g. `ghcr.io/cirruslabs/macos-tahoe-base:latest`). Tart Oven displays their repository reference, size, virtual disk size, and last-accessed timestamp. Their primary Dashboard action is **Clone**.
-
-### Cloning an OCI Image to a Local VM
-1. In the **OCI Images** section of the Dashboard, click **Clone** next to an image.
-2. Tart Oven opens **VM Management** with the image reference pre-selected.
-3. Choose a name and hardware specifications (CPU, RAM, Disk) for your new local VM and click **Create**.
-4. Once cloned, the new VM appears under **Local VMs** ready to be started and scheduled.
-
-> [!TIP]
-> **Exclude OCI images from scheduler** is enabled by default under **Configuration → VM Scheduler**. Keep this enabled so your base templates remain untouched while cloned local VMs are scheduled.
+- [Stage 1: Welcome & Value Proposition](#stage-1-welcome--value-proposition)
+- [Stage 2: Quickstart 5-Minute Onboarding Guide](#stage-2-quickstart-5-minute-onboarding-guide)
+- [Stage 3: Base Image Management & OCI Registry Workflow](#stage-3-base-image-management--oci-registry-workflow)
+- [Stage 4: Daily Fleet Operations, Screen Sharing & Automation Scheduler](#stage-4-daily-fleet-operations-screen-sharing--automation-scheduler)
+- [Stage 5: Jamf Pro & MDM Administrator Toolkit](#stage-5-jamf-pro--mdm-administrator-toolkit)
+- [Stage 6: Host Performance, Kernel Safeguards & Hardware Tuning](#stage-6-host-performance-kernel-safeguards--hardware-tuning)
+- [Stage 7: Automation & REST / SSE API Reference](#stage-7-automation--rest--sse-api-reference)
+- [Stage 8: Diagnostic Runbooks & Troubleshooting FAQ](#stage-8-diagnostic-runbooks--troubleshooting-faq)
 
 ---
 
-## 3. The Core Tart Oven Workflow
+## Stage 1: Welcome & Value Proposition
+
+Tart Oven transforms standalone Apple Silicon Macs into robust, self-healing virtualization hosts. By combining a lightweight Go background daemon with an interactive, responsive web console, Tart Oven eliminates the friction of managing virtual machine fleets for CI/CD runners, Mac management testing, and ad-hoc development.
+
+### Core Architecture & Highlights
 
 ```
-[ 1. Clone or Create VM ] ──► [ 2. Configure Hardware ] ──► [ 3. Start VM / Enable Scheduler ] ──► [ 4. Screen Share or Run Tasks ] ──► [ 5. Stop ]
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    Web UI & REST API                                     │
+│  ┌───────────────────────┬─────────────────────────┬──────────────────────────────────┐  │
+│  │   Fleet Management    │   Automated Scheduler   │   Live Host Telemetry & Charts   │  │
+│  └───────────────────────┴─────────────────────────┴──────────────────────────────────┘  │
+└────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                             │ HTTP / SSE / REST
+┌────────────────────────────────────────────▼─────────────────────────────────────────────┐
+│                               Tart Oven Go Daemon (main)                                 │
+│  ┌───────────────────────┬─────────────────────────┬──────────────────────────────────┐  │
+│  │  Darwin Kernel Gauges │   Tart Process Engine   │   Guest Agent & SSH Subsystem    │  │
+│  └───────────────────────┴─────────────────────────┴──────────────────────────────────┘  │
+└────────────────────────────────────────────┬─────────────────────────────────────────────┘
+                                             │
+┌────────────────────────────────────────────▼─────────────────────────────────────────────┐
+│                          Apple Silicon Virtualization.framework                          │
+│  ┌────────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐      │
+│  │  macOS Tahoe (v26) VM  │  │ macOS Sequoia (v15) VM │  │  macOS Sonoma (v14) VM │      │
+│  └────────────────────────┘  └────────────────────────┘  └────────────────────────┘      │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Provisioning a Virtual Machine
-* **From an OCI Base Image**: Use the **Clone** button on any cached OCI entry or enter an OCI image reference in **VM Management**.
-* **From a macOS IPSW**: In **VM Management → Create VMs**, select **Create from IPSW**, choose your macOS version ("latest" or local file path), and configure disk and memory.
-
-### 2. Configuring Guest Command Access
-**Usually nothing to do.** Status checks and remote commands run through the **Tart guest
-agent**, which the official `ghcr.io/cirruslabs/macos-*-base` images ship preinstalled.
-The VM row shows `agent` when that path is in use, and no SSH, key, or password is involved.
-
-For a guest **without** the agent (for example a `vanilla-*` image), Tart Oven falls back
-to SSH:
-1. Boot the VM and ensure **System Settings → General → Sharing → Remote Login (SSH)** is enabled in the guest.
-2. In Tart Oven under **Configuration → SSH & Commands**, verify the default SSH user and password (defaults for stock Cirrus images are `admin` / `admin`), and set an **SSH identity file** (must start with `~/` or `/`).
-3. Follow the **SSH setup guide** in **VM Management** to place the key in the guest, or click **Install agent** on the VM row to install the guest agent instead and stop needing SSH.
-
-Turning off **Allow SSH fallback for guest commands** in **Configuration → SSH & Commands**
-restricts Tart Oven to the agent only, and hides the SSH-only settings and guide.
-
-### 3. Running & Scheduling VMs
-* **Manual Control**: Click **Run** on any stopped VM in the Dashboard.
-* **Automated Scheduling**: In **Configuration → VM Scheduler**, set your desired daily working hours (e.g. `09:00 - 17:00`), run window duration, and interval. Click **Turn Scheduler ON** on the Dashboard.
-
-### 4. Interacting with Running VMs
-* **Screen Sharing**: Click **Screen** in the VM's action menu to open native macOS Screen Sharing (`vnc://admin@<vm-ip>`) directly from your browser.
-* **Ad-Hoc Commands**: Use the **SSH command** bar on the Dashboard to run a command on a selected running VM, with optional `sudo` support. It travels over the guest agent when available and SSH otherwise.
+- **All-in-One Persistent Daemon**: Single compiled binary embedding the Web UI, API, and static assets. Runs silently as a macOS `LaunchAgent` or interactive server.
+- **Automated Fleet Scheduler**: Orchestrates VM lifecycles using configurable working hours windows and rotation policies (*Sequential* round-robin or *Random*), auto-terminating idle instances.
+- **Native Host Telemetry & Memory Safeguards**: Gathers host CPU, physical RAM, Darwin kernel memory pressure (`kern.memorystatus_vm_pressure_level`), disk space, and I/O throughput every 60s without process forks. Automatically defers new VM launches under critical memory pressure to guarantee host stability.
+- **Guest Agent First with SSH Fallback**: Executes guest commands and gathers reachability metadata via the high-speed Tart guest agent over virtio vsock sockets, seamlessly falling back to SSH with private key authentication when needed.
+- **OCI Base Image & Local VM Separation**: Explicit distinction between immutable container registry base images and mutable, runnable local clones.
+- **Jamf Pro & MDM Management Suite**: Built-in MDM enrollment status indicators, automated enrollment profile generation, SFTP staging, and hardware identifier randomization.
 
 ---
 
-## 4. WebUI Tabs Overview
+## Stage 2: Quickstart 5-Minute Onboarding Guide
 
-- **Dashboard** — Scheduler master switch, **Refresh VM status** button, separated Local VMs and OCI Images tables with search and filter controls, and per-VM action buttons. The **MDM** column reports each guest's enrollment: green with the Jamf Pro URL when enrolled, red when the guest reports no enrollment, and grey when it has not been probed yet (a VM that has never run, or whose probe failed).
-- **Performance** — Live host health cards (CPU, RAM, Kernel Pressure, Disks, Uptime) and interactive 24-hour historical telemetry charts.
-- **VM Management** — VM creation (IPSW install or OCI/template cloning), hardware editing (`tart set`), renaming, and deletion. Background task output is streamed live to the **Activity** panel.
-- **Configuration** — Centralized settings for the VM Scheduler, Tart runtime & storage paths, SSH timeouts, network listen address, and auto-start LaunchAgent. The light/dark toggle lives in the page header.
-- **Logs** — Rolling system logs, background Activity task output, and searchable VM run history.
-- **Helper Guide** — Interactive, in-app documentation and user guide.
+Get Tart Oven up and running with your first bootable macOS virtual machine in less than 5 minutes.
 
----
+### Step 1: Install Tart Oven
 
-## 5. Host Performance & Memory Safeguards
+You can install Tart Oven via the prebuilt signed macOS installer package or compile directly from source:
 
-Tart Oven monitors the host Mac's resources in real time to prevent runaway resource exhaustion.
-
-### Real-Time Telemetry
-Tart Oven samples native host metrics every 60 seconds without invoking shell sub-processes or causing Stop-The-World (STW) runtime pauses:
-- Real host CPU utilization percentage.
-- Physical RAM used and Darwin kernel memory pressure level.
-- Storage capacity on the system disk (`/`) and Tart VM storage volume.
-- Aggregate host disk read and write I/O throughput.
-- Host system uptime.
-
-### Critical-Pressure Start Deferral
-When the Darwin kernel reports **Critical** memory pressure (`kern.memorystatus_vm_pressure_level`), Tart Oven automatically defers new manual and scheduled VM starts until pressure subsides to Warning or Normal:
-- Existing running VMs continue uninterrupted.
-- The scheduler continues stopping VMs whose normal runtime has elapsed.
-- Manual start attempts display a clear explanation: `host is under critical memory pressure`.
-- As soon as host pressure drops, the start gate clears automatically.
-
-### Guest Command Execution
-Tart Oven runs **Get info** and **Send command** through the **Tart guest agent** over a
-virtual socket — no SSH, no key, no guest network, and no credentials. The official
-`ghcr.io/cirruslabs/macos-*-base` images ship the agent preinstalled. For guests without
-it (for example `vanilla-*` images), Tart Oven falls back to SSH using the identity file
-in **Configuration → SSH & Commands**; see the SSH setup guide in **VM Management**.
-
-### Stopping a VM
-**Stop** executes `tart stop -t 5` directly, terminating the VM within seconds and
-releasing host resources, with a process kill fallback if needed.
-
----
-
-## 6. Multi-Machine Network Access (LAN)
-
-By default, Tart Oven binds to `127.0.0.1:9000` (accessible only from the host Mac).
-
-To access the web dashboard from another Mac or PC on your local network:
-1. In **Configuration → Server Settings**, change **Listen Address** to `0.0.0.0:9000`.
-2. Click **Restart Server**.
-3. Open `http://<host-mac-ip>:9000` in your web browser.
-
-> [!NOTE]
-> The **Screen** button connects your client Mac to the guest VM over the local network via VNC. Both the client and the VM must be on reachable subnets.
-
----
-
-## 7. Installation, Upgrades & Deployment
-
-### Install or Upgrade to 1.40
-Double-click `TartOven-1.40.pkg` or run from Terminal:
+#### Option A: macOS Installer Package (.pkg)
+Download `TartOven-1.40.pkg` and install via Terminal or Finder:
 
 ```sh
-sudo installer -pkg ~/Downloads/TartOven-1.40.pkg -target /
+sudo installer -pkg TartOven-1.40.pkg -target /
 ```
 
-This updates the binary at `/Library/Application Support/Tart Oven/tart-oven`, restarts the LaunchAgent, and preserves all existing configuration in `~/.tart-oven/state.json`.
+This installs the binary to `/Library/Application Support/Tart Oven/tart-oven` and registers a user `LaunchAgent` at `~/Library/LaunchAgents/io.github.motionbug.tart-oven.plist`.
 
-### Building from Source & Packaging
+#### Option B: Build from Source
+Ensure Go 1.24+ is installed:
 
 ```sh
-# 1. Build standalone binary
+# Clone repository and build
+git clone https://github.com/motionbug/tart-oven.git
+cd tart-oven
 go build -o tart-oven .
 
-# 2. Build & sign macOS installer package (.pkg)
-# Automatically signs with detected Developer ID and outputs to ~/Downloads/TartOven-1.40.pkg
-./packaging/build-pkg.sh
+# Run directly
+./tart-oven -listen 127.0.0.1:9000
 ```
+
+### Step 2: Open the Web Console
+Navigate to `http://127.0.0.1:9000` in your web browser. If launching for the first time, Tart Oven detects whether Tart CLI is present and guides you through initial storage configuration.
+
+### Step 3: Pull a macOS Base Image
+1. In the **OCI Images** panel on the Dashboard, click **⇩ Pull OCI Image**.
+2. Select a curated preset (such as **🍏 macOS 15 (Sequoia)** or `ghcr.io/cirruslabs/macos-sequoia-base:latest`).
+3. Click **Pull Image**. The live streaming log will track layer downloads.
+
+### Step 4: Clone to a Local VM
+1. Once the pull completes, click **Clone** next to the OCI image.
+2. Enter a VM name (e.g. `sequoia-runner-01`), choose CPU cores (e.g. `4`), RAM (e.g. `8 GiB`), and disk size (e.g. `50 GiB`).
+3. Click **Create Local VM**.
+
+### Step 5: Start & Screen Share
+1. On the **Dashboard**, find `sequoia-runner-01` in the **Local VMs** table and click **▶ Run**.
+2. Once the VM reports an IP address and green status bubble, click **Screen** to open native macOS Screen Sharing (`vnc://admin@<vm-ip>`).
 
 ---
 
-## 8. HTTP REST API Reference
+## Stage 3: Base Image Management & OCI Registry Workflow
 
-| Method | Path | Payload | Description |
+Tart Oven maintains a strict boundary between cached OCI registry base templates and runnable local virtual machines.
+
+### Curated macOS Base Images
+
+| Operating System | Recommended OCI Image Reference | Default Specs | Agent |
 |---|---|---|---|
-| GET | `/api/vms` | — | Full daemon state snapshot, VM metadata, and status |
-| POST | `/api/run` | `{"name": "vm-name"}` | Start a VM |
-| POST | `/api/stop` | `{"name": "vm-name"}` | Fast hard stop a VM (`tart stop -t 5`) |
-| POST | `/api/restart` | `{"name": "vm-name"}` | Restart a VM |
-| POST | `/api/exec` | `{"name": "vm", "command": "cmd"}` | Run a command in the guest (agent first, SSH fallback) |
-| GET | `/api/info` | `?name=vm-name` | Query guest reachability and system info |
-| POST | `/api/vm/install-agent` | `{"name": "vm-name"}` | Install the Tart guest agent into a running VM |
-| POST | `/api/vm/mdm-profile` | `{"name": "vm-name"}` | Generate and copy a Jamf enrollment profile |
-| POST | `/api/vm/clear-boot-failure` | `{"name": "vm-name"}` | Clear a VM's boot-failure flag |
-| POST | `/api/refresh` | — | Force an immediate reconcile against Tart |
-| GET | `/api/performance` | — | Latest host telemetry sample & 24h history |
-| GET | `/api/history` | — | Execution history logs |
-| POST | `/api/vm/create` | Create JSON | Provision or clone a new VM |
-| POST | `/api/vm/set` | Hardware JSON | Reconfigure CPU, memory, disk, or display |
-| POST | `/api/vm/rename` | `{"name": "a", "newName": "b"}` | Rename a stopped VM |
-| POST | `/api/vm/delete` | `{"name": "vm-name"}` | Delete a stopped VM |
-| GET/POST | `/api/config` | Config JSON | Read or update daemon configuration |
-| GET | `/api/changelog` | — | Read raw markdown release notes |
-| GET | `/events` | — | Real-time Server-Sent Events (SSE) stream |
+| **macOS 26 (Tahoe)** | `ghcr.io/cirruslabs/macos-tahoe-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
+| **macOS 15 (Sequoia)** | `ghcr.io/cirruslabs/macos-sequoia-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
+| **macOS 14 (Sonoma)** | `ghcr.io/cirruslabs/macos-sonoma-base:latest` | 4 vCPU, 8 GB RAM | Preinstalled |
+
+### The Golden Master Template Pattern
+
+To minimize disk usage and provisioning overhead across your fleet:
+
+1. **Pull Base Image**: Pull a pristine base image from GHCR or your internal OCI registry.
+2. **Create Master Template Clone**: Clone the OCI base into a local template VM (e.g. `tmpl-sequoia-qa`).
+3. **Customize & Pre-configure**: Boot `tmpl-sequoia-qa`, install Xcode command line tools, developer SDKs, certificates, or tools, and shut it down.
+4. **Fast-Clone Fleet Instances**: Clone `tmpl-sequoia-qa` into multiple operational VMs (`qa-01`, `qa-02`, etc.) using APFS copy-on-write cloning.
+
+```sh
+# Pull base image via Tart CLI or Web UI
+tart pull ghcr.io/cirruslabs/macos-sequoia-base:latest
+
+# Clone base into golden master template
+tart clone ghcr.io/cirruslabs/macos-sequoia-base:latest tmpl-sequoia-qa
+
+# Provision operational instance with hardware configuration
+tart clone tmpl-sequoia-qa runner-01
+tart set runner-01 --cpu 6 --memory 12288 --disk-size 60
+```
+
+> [!TIP]
+> **APFS Instant Cloning**: On macOS APFS volumes, cloning a 50 GiB VM template takes under 2 seconds and consumes zero initial storage, referencing shared base data until blocks are modified.
 
 ---
 
-## 9. Optional Integrations: Jamf Pro MDM Base Preparation
+## Stage 4: Daily Fleet Operations, Screen Sharing & Automation Scheduler
 
-> [!NOTE]
-> This is an **optional add-on workflow** designed for lab administrators who use Jamf Pro to manage test VMs. If you do not use Jamf Pro, you can skip this section entirely.
+Tart Oven provides granular manual controls alongside an automated background scheduler designed for unattended CI/CD Mac mini and Mac Studio racks.
 
-### Overview
-Tart Oven provides a one-click helper to generate an Apple MDM enrollment profile from your Jamf Pro server and upload it to a base VM over SFTP. 
+### Automated Fleet Scheduler
 
-```
-[ 1. Clone Clean Base ] ──► [ 2. Start Base & Confirm SSH ] ──► [ 3. Copy Profile to Desktop ] ──► [ 4. Stop Base (Do NOT Enroll) ] ──► [ 5. Clone Base for Users ]
-```
+The scheduler runs in a dedicated background goroutine and continuously reconciles desired fleet state:
 
-> [!WARNING]
-> **Do not approve or enroll the base VM itself.**
-> The base VM serves as a reusable template. Each cloned VM will inherit the profile on its Desktop for separate enrollment and unique Jamf device registration.
+- **Daily Working Hours Window**: Define active operational hours (e.g. `08:00 - 18:00`). Outside of this window, all running scheduled VMs are automatically shut down to preserve host thermals and power.
+- **Run Window & Interval**: Specify maximum VM run duration (e.g. 60 minutes) and cool-down intervals.
+- **Selection Modes**:
+  - **Sequential (Round-Robin)**: Cycles through the pool of stopped local VMs in orderly rotation.
+  - **Random**: Randomly selects a stopped local VM from the eligible pool.
+- **OCI Exclude Guard**: `Exclude OCI images from scheduler` is enabled by default to prevent pristine base images from accidentally booting into scheduler rotation.
 
-### Step-by-Step Setup
-1. **Create Enrollment Invitation in Jamf Pro**:
-   - In Jamf Pro, go to **Computers → Enrollment Invitations**.
-   - Create an invitation with **Allow multiple uses** enabled. Copy the resulting `INVITATION_ID`.
-2. **Save Settings in Tart Oven**:
-   - In Tart Oven under **VM Management → Prepare base VM for Jamf**, enter your **Jamf Base URL** (e.g. `https://tenant.jamfcloud.com`), the **Invitation ID**, and guest SSH credentials.
-   - Click **Save settings**.
-3. **Copy Profile to Base VM**:
-   - Start your base VM (e.g. `jamf-base`).
-   - Select the running base VM and click **Copy profile to Desktop**.
-   - Tart Oven generates `mdm_enroll.mobileconfig`, uploads it via SFTP, and cryptographically verifies the file on the guest Desktop.
-4. **Stop & Clone**:
-   - Stop `jamf-base`.
-   - Clone `jamf-base` whenever you need a fresh test VM with the enrollment profile pre-staged on the Desktop.
+### Headless Operation & Audio Suppression
+
+For high-density CI runners where GUI rendering is unnecessary:
+- **Headless Mode (`--no-graphics`)**: Runs the VM without allocating host display server resources.
+- **Audio Suppression (`--no-audio`)**: Disables virtual sound devices to eliminate host CoreAudio daemon overhead.
+
+### Native macOS Screen Sharing
+
+Clicking **Screen** on any running VM opens macOS native Screen Sharing via the `vnc://` URL scheme:
+- Default credentials for Cirrus Labs base images: User: `admin`, Password: `admin`.
+- Operates over the local bridge network between host and guest.
+
+### Guest Command Execution & Agent Architecture
+
+Tart Oven executes guest operations using a dual-path engine:
+1. **Primary: Tart Guest Agent**: Communicates directly through a virtual socket (`virtio-vsock`). High-speed, zero-network dependency, no SSH daemon or SSH credentials required.
+2. **Fallback: Guest SSH**: For VMs lacking the agent (e.g. custom IPSW installs), commands execute over SSH using the configured SSH user, password, and private key identity file (`~/.ssh/id_ed25519`).
 
 ---
 
-## 10. Troubleshooting & FAQ
+## Stage 5: Jamf Pro & MDM Administrator Toolkit
 
-| Message or Symptom | Explanation & Resolution |
-|---|---|
-| **VM reports "No IP after 60s"** | The VM started but has not emitted DHCP traffic on the bridge interface. Verify that the configured bridge interface is active, or increase **Boot timeout** under Configuration. |
-| **Status bubble is Red / Get Info fails** | The guest agent did not answer and the SSH fallback also failed. Click **Install agent** on the VM row, or enable Remote Login in the guest and set a valid **SSH identity file** in Configuration. |
-| **"Deferred: host is under critical memory pressure"** | Host RAM is exhausted. Tart Oven paused new starts to prevent a kernel crash. Stop idle VMs or reduce guest RAM allocations in VM Management. |
+Tart Oven includes specialized tooling for Apple Device Management (MDM) engineers, QA teams testing Jamf Pro workflows, and Mac Admins staging enrollment profiles.
+
+### MDM Enrollment Status Column
+
+The Dashboard features a dedicated **MDM** status column reporting each guest's live enrollment state:
+- 🟢 **Green (Enrolled)**: Displays the connected Jamf Pro / MDM server URL.
+- 🔴 **Red (Unenrolled)**: Confirms the guest is running but no active MDM enrollment profile is installed.
+- ⚪ **Grey (Unprobed)**: The VM has not been booted or probed yet.
+
+### The Invariant Rule: Mandatory Hardware Randomization for MDM Cloning
+
+> [!IMPORTANT]
+> **MANDATORY MDM CLONING RULE**:
+> Whenever you clone a base VM or template for Jamf Pro / MDM enrollment testing, you **MUST ALWAYS** enable `--random-serial` and `--random-mac`.
+>
+> In the CLI:
+> ```sh
+> tart clone --random-serial --random-mac base-jamf-template enrolled-vm-01
+> ```
+> Or in Tart Oven Web UI: Ensure **Randomize Serial Number** and **Randomize MAC Address** checkboxes are enabled during clone creation.
+
+#### Why Hardware Randomization is Critical for MDM
+
+Apple MDM frameworks and Jamf Pro uniquely index, bind, and track managed endpoints by hardware **Serial Number** and **MAC Address**:
+1. **Serial Number Collision**: If multiple VMs share the same hardware serial number, Jamf Pro treats incoming check-ins as the *same device*. Each check-in overwrites previous inventory records, creating inventory flapping and ghost status reports.
+2. **MDM Identity Certificate Collisions**: Enrolling a duplicate serial number revokes or invalidates the APNs push token and SCEP machine certificates of earlier clones.
+3. **Network DHCP Lease Clashes**: Duplicate MAC addresses cause DHCP IP assignment collisions on local bridge networks.
+
+### Staging Jamf Enrollment Profiles to Base VM
+
+Tart Oven can automatically stage an enrollment invitation profile onto a base template Desktop:
+
+```
+┌────────────────────────┐      ┌────────────────────────┐      ┌────────────────────────┐
+│  1. Jamf Pro Server    │ ───► │  2. Tart Oven Daemon   │ ───► │ 3. Base VM Desktop     │
+│  Create Multi-Use      │      │  Fetch & Generate      │      │ Upload mdm_enroll      │
+│  Enrollment Invitation │      │  mobileconfig Payload  │      │ via SFTP (Do NOT run)  │
+└────────────────────────┘      └────────────────────────┘      └────────────────────────┘
+                                                                             │
+                                                                             ▼
+                                                                ┌────────────────────────┐
+                                                                │ 4. Clone for Users     │
+                                                                │ tart clone             │
+                                                                │  --random-serial       │
+                                                                │  --random-mac          │
+                                                                └────────────────────────┘
+```
+
+1. In Jamf Pro, go to **Computers → Enrollment Invitations**, create a multi-use invitation, and copy the `INVITATION_ID`.
+2. In Tart Oven under **VM Management → Prepare base VM for Jamf**, enter your Jamf Base URL (`https://tenant.jamfcloud.com`), Invitation ID, and base VM credentials.
+3. Click **Copy profile to Desktop**. Tart Oven generates `mdm_enroll.mobileconfig`, uploads it via SFTP, and validates the file signature.
+4. **Do not enroll the base template.** Shut down the base VM and clone individual testing instances with `--random-serial` and `--random-mac`.
+
+---
+
+## Stage 6: Host Performance, Kernel Safeguards & Hardware Tuning
+
+Tart Oven is engineered for continuous 24/7 background operation on Apple Silicon host hardware without degrading macOS host stability.
+
+### Real-Time In-Process Telemetry
+
+Host metrics are sampled every 60 seconds using direct Darwin kernel APIs and Cgo system calls, completely bypassing shell sub-processes:
+- **Host CPU Utilization**: Direct `host_processor_info()` Mach kernel sampling.
+- **Physical Memory & Kernel Pressure**: Evaluates `kern.memorystatus_vm_pressure_level` (Normal, Warning, Critical) and active/wired memory pages.
+- **Storage Capacity**: Filesystem `statfs` queries on root `/` and Tart storage volume.
+- **Disk I/O Throughput**: Dynamic delta tracking of aggregate disk read/write bytes per second.
+- **Telemetry Charts**: 24-hour in-memory rolling time series visualized with high-contrast, theme-aware SVG rendering.
+
+### Darwin Kernel Critical Memory Pressure Start Deferral
+
+When host physical memory is exhausted and macOS triggers **Critical** memory pressure:
+1. **New Start Deferral**: Tart Oven immediately blocks all manual and scheduled VM starts.
+2. **Clear Feedback**: Attempts to start a VM return HTTP `503 Service Unavailable` with message: `host is under critical memory pressure`.
+3. **Non-Disruptive**: Existing running VMs continue operating without interruption.
+4. **Auto-Recovery**: As soon as memory pressure subsides to Warning or Normal, the launch gate re-opens automatically.
+5. **Memory Scavenging**: Periodically invokes Go runtime memory scavenging (`debug.FreeOSMemory()`) to return unused runtime heap pages back to macOS.
+
+### Hardware Tuning Guidelines for Apple Silicon
+
+| Host Hardware | Max Recommended Concurrent macOS VMs | RAM Allocation per Guest | CPU Allocation per Guest |
+|---|---|---|---|
+| **Apple M1 / M2 / M3 (16 GB)** | 1 - 2 VMs | 4 GB - 6 GB | 2 - 4 vCPUs |
+| **Apple M1 / M2 / M3 Pro (32 GB)** | 2 - 4 VMs | 6 GB - 8 GB | 4 vCPUs |
+| **Apple M1 / M2 / M3 / M4 Max (64-128 GB)** | 4 - 8 VMs | 8 GB - 16 GB | 4 - 6 vCPUs |
+| **Apple M1 / M2 / M3 Ultra (128-192 GB)** | 8 - 16 VMs | 8 GB - 16 GB | 4 - 8 vCPUs |
+
+---
+
+## Stage 7: Automation & REST / SSE API Reference
+
+Tart Oven exposes a comprehensive JSON REST API and real-time Server-Sent Events (SSE) stream for integration with CI/CD runners, Ansible, Terraform, and custom monitoring scripts.
+
+### Endpoints Overview
+
+| Method | Endpoint | Description | Request Payload | Response Schema |
+|---|---|---|---|---|
+| `GET` | `/api/vms` | Retrieve full daemon state, VM metadata, and status | None | `{"vms": [...], "ociImages": [...], "tasks": [...]}` |
+| `POST` | `/api/run` | Start a stopped virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/stop` | Immediate hard stop (`tart stop -t 5`) | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/restart` | Stop and restart a virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/exec` | Execute command in guest (agent first, SSH fallback) | `{"name": "vm-name", "command": "uname -a"}` | `{"stdout": "...", "stderr": "...", "exitCode": 0}` |
+| `GET` | `/api/info` | Query guest reachability and hardware details | `?name=vm-name` | `{"reachable": true, "ip": "...", "osVersion": "..."}` |
+| `POST` | `/api/oci/pull` | Pull an OCI base image asynchronously | `{"image": "ghcr.io/...", "insecure": false}` | `{"ok": true, "taskId": "...", "image": "..."}` |
+| `POST` | `/api/vm/create` | Provision new VM from IPSW or clone template | `{"name": "...", "source": "...", "cpu": 4, "memory": 8192, "disk": 50, "randomSerial": true, "randomMac": true}` | `{"ok": true, "taskId": "..."}` |
+| `POST` | `/api/vm/set` | Reconfigure VM hardware settings | `{"name": "...", "cpu": 6, "memory": 12288, "disk": 60, "display": "1920x1080"}` | `{"ok": true}` |
+| `POST` | `/api/vm/rename` | Rename a stopped virtual machine | `{"name": "old-name", "newName": "new-name"}` | `{"ok": true}` |
+| `POST` | `/api/vm/delete` | Delete a stopped virtual machine | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/vm/install-agent` | Install Tart guest agent into a running VM | `{"name": "vm-name"}` | `{"ok": true, "taskId": "..."}` |
+| `POST` | `/api/vm/mdm-profile` | Stage Jamf enrollment profile to guest Desktop | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/vm/clear-boot-failure` | Clear boot failure error flag | `{"name": "vm-name"}` | `{"ok": true}` |
+| `POST` | `/api/refresh` | Force immediate reconcile against Tart storage | None | `{"ok": true}` |
+| `GET` | `/api/performance` | Query latest host metrics and 24h telemetry history | None | `{"current": {...}, "history": [...]}` |
+| `GET` | `/api/history` | Retrieve rolling execution and audit log entries | None | `[{"time": "...", "vm": "...", "action": "..."}]` |
+| `GET` | `/api/config` | Read current daemon configuration | None | `{Config Object}` |
+| `POST` | `/api/config` | Update daemon configuration | `{Partial Config Object}` | `{"ok": true}` |
+| `GET` | `/api/readme` | Fetch raw embedded documentation markdown | None | `text/markdown` |
+| `GET` | `/api/changelog` | Fetch raw embedded changelog markdown | None | `text/markdown` |
+| `GET` | `/events` | Real-time Server-Sent Events (SSE) event stream | None | `text/event-stream` |
+
+### API Usage Examples
+
+#### 1. Start a Virtual Machine
+```sh
+curl -X POST http://127.0.0.1:9000/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"name": "sequoia-runner-01"}'
+```
+
+#### 2. Execute a Command in Guest
+```sh
+curl -X POST http://127.0.0.1:9000/api/exec \
+  -H "Content-Type: application/json" \
+  -d '{"name": "sequoia-runner-01", "command": "sw_vers"}'
+```
+
+#### 3. Pull an OCI Base Image
+```sh
+curl -X POST http://127.0.0.1:9000/api/oci/pull \
+  -H "Content-Type: application/json" \
+  -d '{"image": "ghcr.io/cirruslabs/macos-sequoia-base:latest", "insecure": false}'
+```
+
+#### 4. Stream Real-Time Events
+```sh
+curl -N http://127.0.0.1:9000/events
+```
+
+---
+
+## Stage 8: Diagnostic Runbooks & Troubleshooting FAQ
+
+Step-by-step diagnostic runbooks for resolving common virtualization, network, and management anomalies.
+
+### Runbook 1: Jamf Device Record Collision & Serial Duplication Triage
+
+#### Symptom & Root Cause
+Multiple test VMs report the same Jamf Pro Computer Record ID, inventory check-ins overwrite existing device entries, or MDM configuration profiles flap continuously.
+- **Root Cause**: Clones were created from a base image without randomizing hardware identifiers, causing duplicate Serial Numbers and MAC addresses in Jamf Pro inventory.
+
+#### Resolution Steps
+1. **Identify Duplicate Serial Numbers**:
+   In Tart Oven or Terminal, inspect the serial number of affected VMs:
+   ```sh
+   tart get <vm-name> --serial
+   ```
+2. **Purge Duplicate Computer Records in Jamf Pro**:
+   - In Jamf Pro Web Console, navigate to **Computers → Search Inventory**.
+   - Search for the duplicate serial number.
+   - Delete the colliding computer record to clear stale SCEP certificates and APNs tokens.
+3. **Re-clone with Mandatory Randomization Flags**:
+   Delete the un-randomized clone and recreate it enforcing `--random-serial` and `--random-mac`:
+   ```sh
+   tart delete <vm-name>
+   tart clone --random-serial --random-mac <base-template> <new-vm-name>
+   ```
+4. **Boot and Re-enroll**:
+   Start the new VM, verify its unique serial number (`tart get <new-vm-name> --serial`), and proceed with MDM enrollment.
+
+---
+
+### Runbook 2: VM Reports "No IP address after 60s" / Bridge DHCP Timeout
+
+#### Symptom
+The VM starts in Virtualization.framework, but the Dashboard displays a warning: `No IP address after 60s`.
+
+#### Diagnostic Steps & Resolution
+1. **Verify Host Bridge Interface**:
+   In **Configuration → Tart Paths & Network**, check the **Bridge Network Interface** setting. Ensure the specified host interface (e.g. `en0` for Wi-Fi or Ethernet) is active and connected to a network with an operational DHCP server.
+2. **Check DHCP Pool Capacity**:
+   Ensure the local router or DHCP server has available IP leases in the subnet pool.
+3. **Adjust Boot Timeout**:
+   If guest macOS boots slowly on heavy host workloads, increase **Boot timeout (seconds)** in **Configuration** to `120` or `180`.
+4. **Inspect Packet Filter (`pf`) Rules**:
+   Ensure host firewall or third-party endpoint security tools (e.g. Little Snitch, LuLu) are not blocking DHCP (`UDP 67/68`) or ARP traffic on virtual bridge interfaces.
+
+---
+
+### Runbook 3: Guest Agent Reachability vs. SSH Fallback Failures
+
+#### Symptom
+Status bubble shows Red, or **Send Command** / **Get Info** fails with `guest unreachable`.
+
+#### Diagnostic Steps & Resolution
+1. **Determine Execution Path**:
+   Check whether the VM row indicates `agent` or `ssh`.
+2. **If Using Guest Agent**:
+   - Verify that the Tart guest agent is running inside the guest.
+   - For custom or vanilla images missing the agent, click **Install Agent** on the VM row or run the installer script via SSH.
+3. **If Using Guest SSH Fallback**:
+   - Ensure **Remote Login (SSH)** is enabled in the guest under **System Settings → General → Sharing**.
+   - Verify that the SSH user (default `admin`) and **SSH Identity File** (e.g. `~/.ssh/id_ed25519`) are configured in **Configuration → SSH & Commands**.
+   - Test manual SSH connectivity: `ssh -i ~/.ssh/id_ed25519 admin@<vm-ip>`.
+
+---
+
+### Runbook 4: Screen Sharing (VNC) Connection Errors
+
+#### Symptom
+Clicking **Screen** fails to establish a VNC connection or prompts with `Connection failed`.
+
+#### Diagnostic Steps & Resolution
+1. **Validate Network Reachability**:
+   Ensure the client machine can route to the guest VM's IP address. If accessing Tart Oven from another computer on the LAN, ensure the host daemon's listen address is set to `0.0.0.0:9000` in **Configuration**.
+2. **Verify Guest Screen Sharing Service**:
+   In the guest VM, ensure **Screen Sharing** or **Remote Management** is enabled in **System Settings → General → Sharing**.
+3. **Default Credentials**:
+   Standard Cirrus Labs base images use username `admin` and password `admin`.
+
+---
+
+### Runbook 5: LaunchAgent Daemon Management & Permissions
+
+#### Symptom
+The Tart Oven daemon does not start automatically on login, or cannot access Tart storage.
+
+#### Diagnostic Steps & Resolution
+1. **Inspect LaunchAgent Status**:
+   ```sh
+   launchctl list | grep tart-oven
+   ```
+2. **Reload LaunchAgent**:
+   ```sh
+   launchctl unload ~/Library/LaunchAgents/io.github.motionbug.tart-oven.plist
+   launchctl load ~/Library/LaunchAgents/io.github.motionbug.tart-oven.plist
+   ```
+3. **Review Daemon Logs**:
+   Inspect stdout and stderr logs located at:
+   ```sh
+   tail -n 100 ~/.tart-oven/tart-oven.log
+   ```
+
+---
+
+### Runbook 6: Critical Memory Pressure Start Deferral
+
+#### Symptom
+Attempting to start a VM fails with: `Deferred: host is under critical memory pressure`.
+
+#### Diagnostic Steps & Resolution
+1. **Inspect Performance Tab**:
+   Navigate to the **Performance** tab and observe the **Kernel Memory Pressure** card and chart.
+2. **Stop Idle VMs**:
+   Shut down unused or idle virtual machines to release wired physical memory back to the host.
+3. **Adjust VM Memory Allocation**:
+   Reduce guest RAM allocations in **VM Management** (e.g. adjust from 16 GB to 8 GB or 4 GB).
+4. **Automatic Clearance**:
+   Once host memory pressure returns to `Normal` or `Warning`, Tart Oven automatically clears the start deferral gate.
