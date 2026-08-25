@@ -500,13 +500,17 @@ test("submitOciPull handles text/plain and json error responses gracefully", asy
     },
   };
 
-  // Test 1: Plain-text error (like Go http.Error 409)
+  // Test 1: Plain-text error (like Go http.Error 409) with single-stream body read simulation
+  let textRead1 = false;
   const submitOciPullPlainTextErr = evaluateFunction("submitOciPull", {
     document,
     api: async () => ({
       ok: false,
-      json: async () => { throw new SyntaxError("Unexpected token"); },
-      text: async () => "a pull for this image is already in progress\n",
+      text: async () => {
+        if (textRead1) throw new Error("Body already read");
+        textRead1 = true;
+        return "a pull for this image is already in progress\n";
+      },
     }),
     toast: (title, msg, type) => { toasts.push({ title, msg, type }); },
   });
@@ -518,14 +522,18 @@ test("submitOciPull handles text/plain and json error responses gracefully", asy
   assert.equal(submitBtn.disabled, false);
   assert.equal(submitBtn.textContent, "Pull Image");
 
-  // Test 2: JSON error
+  // Test 2: JSON error with single-stream body read simulation
   toasts.length = 0;
+  let textRead2 = false;
   const submitOciPullJsonErr = evaluateFunction("submitOciPull", {
     document,
     api: async () => ({
       ok: false,
-      json: async () => ({ error: "insufficient disk space" }),
-      text: async () => '{"error":"insufficient disk space"}',
+      text: async () => {
+        if (textRead2) throw new Error("Body already read");
+        textRead2 = true;
+        return '{"error":"insufficient disk space"}';
+      },
     }),
     toast: (title, msg, type) => { toasts.push({ title, msg, type }); },
   });

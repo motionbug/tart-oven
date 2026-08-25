@@ -1904,12 +1904,15 @@ async function submitOciPull() {
     if (!res.ok) {
       let errText = "";
       try {
-        const data = await res.json();
-        errText = data.error || data.message;
-      } catch (_) {
-        errText = await res.text().catch(() => "");
-      }
-      throw new Error((errText || "").trim() || "Failed to start OCI pull");
+        const raw = (await res.text()).trim();
+        try {
+          const data = JSON.parse(raw);
+          errText = data.error || data.message || raw;
+        } catch (_) {
+          errText = raw;
+        }
+      } catch (_) {}
+      throw new Error(errText || "Failed to start OCI pull");
     }
     toast("OCI Pull", "Pull task started for " + image, "good");
     const logContainer = document.getElementById("pullOciLogContainer");
