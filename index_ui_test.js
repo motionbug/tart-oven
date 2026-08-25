@@ -8,7 +8,8 @@ const vm = require("node:vm");
 const html = fs.readFileSync("index.html", "utf8");
 
 function extractFunction(name) {
-  const start = html.indexOf("function " + name + "(");
+  let start = html.indexOf("async function " + name + "(");
+  if (start === -1) start = html.indexOf("function " + name + "(");
   assert.notEqual(start, -1, "missing function " + name);
   const open = html.indexOf("{", start);
   let depth = 0;
@@ -333,4 +334,150 @@ test("SSH guide input binding skips missing optional controls without aborting s
   });
   assert.doesNotThrow(() => bindSshGuideInputs());
   assert.equal(listeners, 1);
+});
+
+test("Pull OCI modal contains required controls and macOS preset chips", () => {
+  const requiredElements = [
+    'id="pullOciModal"',
+    'id="pullOciBtn"',
+    'id="ociImageInput"',
+    'id="ociInsecureChk"',
+    'id="pullOciSubmit"',
+    'id="pullOciCancel"',
+    'id="pullOciLog"',
+    'data-oci-preset="ghcr.io/cirruslabs/macos-tahoe-base:latest"',
+    'data-oci-preset="ghcr.io/cirruslabs/macos-sequoia-base:latest"',
+    'data-oci-preset="ghcr.io/cirruslabs/macos-sonoma-base:latest"',
+  ];
+  for (const el of requiredElements) {
+    assert.ok(html.includes(el), `index.html missing element ${el}`);
+  }
+});
+
+test("openPullOciModal and closePullOciModal toggle modal visibility and focus input", () => {
+  const modal = {
+    classList: {
+      classes: new Set(["hidden"]),
+      remove(c) { this.classes.delete(c); },
+      add(c) { this.classes.add(c); },
+      contains(c) { return this.classes.has(c); },
+    },
+  };
+  const input = { focusCalled: false, focus() { this.focusCalled = true; } };
+  const document = {
+    getElementById(id) {
+      if (id === "pullOciModal") return modal;
+      if (id === "ociImageInput") return input;
+      return null;
+    },
+  };
+
+  const openPullOciModal = evaluateFunction("openPullOciModal", {
+    document,
+    renderTasks() {},
+    latest: { tasks: [] },
+  });
+  const closePullOciModal = evaluateFunction("closePullOciModal", {
+    document,
+  });
+
+  openPullOciModal();
+  assert.equal(modal.classList.contains("hidden"), false);
+  assert.equal(input.focusCalled, true);
+
+  closePullOciModal();
+  assert.equal(modal.classList.contains("hidden"), true);
+});
+
+test("selectOciPreset updates input value with preset dataset", () => {
+  const input = { value: "", focusCalled: false, focus() { this.focusCalled = true; } };
+  const document = {
+    getElementById(id) {
+      if (id === "ociImageInput") return input;
+      return null;
+    },
+  };
+  const selectOciPreset = evaluateFunction("selectOciPreset", { document });
+  const btn = { dataset: { ociPreset: "ghcr.io/cirruslabs/macos-sequoia-base:latest" } };
+  selectOciPreset(btn);
+  assert.equal(input.value, "ghcr.io/cirruslabs/macos-sequoia-base:latest");
+  assert.equal(input.focusCalled, true);
+});
+
+test("submitOciPull submits pull request and handles response", async () => {
+  let apiPath = "";
+  let apiOpts = null;
+  const toasts = [];
+  const input = { value: "ghcr.io/cirruslabs/macos-sequoia-base:latest" };
+  const chk = { checked: true };
+  const submitBtn = { disabled: false, textContent: "" };
+  const logContainer = {
+    classList: {
+      classes: new Set(["hidden"]),
+      remove(c) { this.classes.delete(c); },
+    },
+  };
+  const document = {
+    getElementById(id) {
+      if (id === "ociImageInput") return input;
+      if (id === "ociInsecureChk") return chk;
+      if (id === "pullOciSubmit") return submitBtn;
+      if (id === "pullOciLogContainer") return logContainer;
+      return null;
+    },
+  };
+
+  const submitOciPull = evaluateFunction("submitOciPull", {
+    document,
+    api: async (path, opts) => {
+      apiPath = path;
+      apiOpts = opts;
+      return { ok: true, json: async () => ({ ok: true, taskId: "t-1", image: "ghcr.io/cirruslabs/macos-sequoia-base:latest" }) };
+    },
+    toast: (title, msg, type) => { toasts.push({ title, msg, type }); },
+  });
+
+  await submitOciPull();
+
+  assert.equal(apiPath, "/api/oci/pull");
+  assert.equal(apiOpts.method, "POST");
+  assert.deepEqual(JSON.parse(apiOpts.body), { image: "ghcr.io/cirruslabs/macos-sequoia-base:latest", insecure: true });
+  assert.equal(logContainer.classList.classes.has("hidden"), false);
+  assert.equal(submitBtn.textContent, "Pulling...");
+});
+
+test("renderTasks streams pull progress to pullOciLog when pull modal is open", () => {
+  const elements = {
+    tasks: { innerHTML: "" },
+    pullOciModal: { classList: { contains(c) { return false; } } },
+    pullOciLogContainer: { classList: { remove() {} } },
+    pullOciLog: { textContent: "", scrollHeight: 100, scrollTop: 0, clientHeight: 100 },
+    pullOciSubmit: { disabled: false, textContent: "" },
+    ociImageInput: { value: "ghcr.io/cirruslabs/macos-tahoe-base:latest" },
+  };
+  const document = {
+    getElementById: id => elements[id] || null,
+  };
+  const renderTasks = evaluateFunction("renderTasks", {
+    document,
+    esc: s => String(s),
+    fmtDateTime: () => "just now",
+    cancelTask: () => {},
+  });
+
+  const tasks = [
+    {
+      id: "pull-1",
+      kind: "pull",
+      target: "ghcr.io/cirruslabs/macos-tahoe-base:latest",
+      status: "running",
+      output: "Downloading layer 1/5...",
+      startedAt: "2026-08-25T12:00:00Z",
+    },
+  ];
+
+  renderTasks(tasks);
+  assert.equal(elements.pullOciLog.textContent, "Downloading layer 1/5...");
+  assert.equal(elements.pullOciSubmit.disabled, true);
+  assert.equal(elements.pullOciSubmit.textContent, "Pulling...");
 });

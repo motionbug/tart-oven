@@ -496,7 +496,10 @@
     </div>
 
     <div class="panel" id="ociPanel">
-      <h2>OCI Images</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">OCI Images</h2>
+        <button id="pullOciBtn" class="ghost" onclick="openPullOciModal()">⇩ Pull OCI Image</button>
+      </div>
       <p class="muted">Cached registry images are kept separate from runnable local VMs. Clone an image to create a local VM.</p>
       <div class="table-wrap">
         <table>
@@ -607,7 +610,10 @@
   <div id="tab-vmm" class="tab">
 
     <div class="panel">
-      <h2>Create / clone VMs</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">Create / clone VMs</h2>
+        <button class="ghost" onclick="openPullOciModal()">⇩ Pull OCI Image</button>
+      </div>
       <div class="ssh-row" style="margin-bottom:14px">
         <label class="radio"><input type="radio" name="createMode" value="clone" checked onchange="updateCreateMode()"> Clone from template</label>
         <label class="radio"><input type="radio" name="createMode" value="ipsw" onchange="updateCreateMode()"> Create from IPSW</label>
@@ -893,6 +899,40 @@
     </div>
     <div id="changelogContent" class="markdown" style="padding: 20px; overflow-y: auto; max-height: calc(85vh - 70px); font-size: 13px;">
       <p class="muted">Loading changelog…</p>
+    </div>
+  </div>
+</div>
+
+<!-- Pull OCI Image modal -->
+<div id="pullOciModal" class="modal hidden">
+  <div class="modal-backdrop" onclick="closePullOciModal()"></div>
+  <div class="modal-content" style="width: 580px; max-width: 92vw;">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+      <h3 style="margin: 0; font-size: 16px; font-weight: 600;">⇩ Pull OCI Base Image</h3>
+      <button type="button" class="ghost" onclick="closePullOciModal()" style="padding: 4px 10px; font-size: 16px; line-height: 1;" title="Close">✕</button>
+    </div>
+    <div class="muted" style="margin-bottom: 12px; font-size: 13px;">Select a curated macOS base image or specify a custom registry URL:</div>
+    <div class="preset-chips" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+      <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-tahoe-base:latest" onclick="selectOciPreset(this)" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 26 (Tahoe)</button>
+      <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-sequoia-base:latest" onclick="selectOciPreset(this)" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 15 (Sequoia)</button>
+      <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-sonoma-base:latest" onclick="selectOciPreset(this)" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 14 (Sonoma)</button>
+    </div>
+    <div class="field" style="margin-bottom: 12px;">
+      <label for="ociImageInput" style="font-size: 13px; font-weight: 600;">Image Registry URL</label>
+      <input type="text" id="ociImageInput" class="mono" placeholder="ghcr.io/cirruslabs/macos-sequoia-base:latest">
+    </div>
+    <div class="field" style="margin-bottom: 14px;">
+      <label class="radio" style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px;">
+        <input type="checkbox" id="ociInsecureChk"> Allow untrusted / HTTP registry (--insecure)
+      </label>
+    </div>
+    <div id="pullOciLogContainer" class="hidden" style="margin-top: 12px;">
+      <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--muted);">Pull Progress Output:</div>
+      <pre id="pullOciLog" class="mono" style="background: var(--code-bg); padding: 10px; border-radius: 6px; max-height: 160px; overflow-y: auto; font-size: 12px; border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; margin: 0;"></pre>
+    </div>
+    <div class="modal-actions" style="margin-top: 20px;">
+      <button type="button" id="pullOciCancel" class="ghost" onclick="closePullOciModal()">Close</button>
+      <button type="button" id="pullOciSubmit" onclick="submitOciPull()">Pull Image</button>
     </div>
   </div>
 </div>
@@ -1817,6 +1857,66 @@ function cloneFromOCI(name) {
   cloneSource.focus();
 }
 
+function openPullOciModal() {
+  const modal = document.getElementById("pullOciModal");
+  if (modal) modal.classList.remove("hidden");
+  const input = document.getElementById("ociImageInput");
+  if (input) input.focus();
+  if (typeof latest !== "undefined" && latest && latest.tasks) {
+    renderTasks(latest.tasks);
+  }
+}
+
+function closePullOciModal() {
+  const modal = document.getElementById("pullOciModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function selectOciPreset(btn) {
+  const preset = btn && btn.dataset && btn.dataset.ociPreset;
+  const input = document.getElementById("ociImageInput");
+  if (input && preset) {
+    input.value = preset;
+    input.focus();
+  }
+}
+
+async function submitOciPull() {
+  const input = document.getElementById("ociImageInput");
+  const image = (input ? input.value : "").trim();
+  const chk = document.getElementById("ociInsecureChk");
+  const insecure = chk ? chk.checked : false;
+  if (!image) {
+    toast("OCI Pull", "Please enter an OCI image reference or pick a preset.", "bad");
+    return;
+  }
+  const submitBtn = document.getElementById("pullOciSubmit");
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Starting Pull...";
+  }
+  try {
+    const res = await api("/api/oci/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, insecure })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to start OCI pull");
+    toast("OCI Pull", "Pull task started for " + image, "good");
+    const logContainer = document.getElementById("pullOciLogContainer");
+    if (logContainer) logContainer.classList.remove("hidden");
+    if (submitBtn) submitBtn.textContent = "Pulling...";
+  } catch (err) {
+    toast("OCI Pull Failed", err.message, "bad");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Pull Image";
+    }
+  }
+}
+
+
 function renderOCIImages(images, runningOnly, query) {
   const ociPanel = document.getElementById("ociPanel");
   const tbody = document.getElementById("ociImageRows");
@@ -2329,21 +2429,56 @@ function renderLogs(logs) {
 
 function renderTasks(tasks) {
   const c = document.getElementById("tasks");
-  if (!tasks.length) { c.innerHTML = '<div class="muted">No recent create/clone operations.</div>'; return; }
-  c.innerHTML = tasks.slice().reverse().map(t => {
-    const out = t.output ? '<pre>' + esc(t.output) + '</pre>' : "";
-    const when = fmtDateTime(t.startedAt);
-    const cancelBtn = t.status === "running"
-      ? '<button class="ghost tiny" onclick="cancelTask(\'' + esc(t.id) + '\')">✕ Cancel</button>'
-      : "";
-    return '<div class="task"><div class="task-head">' +
-      '<span class="badge ' + t.status + '">' + t.status + '</span>' +
-      '<b>' + esc(t.kind) + '</b> → <span class="mono">' + esc(t.target) + '</span>' +
-      '<span class="muted">' + esc(when) + '</span>' +
-      (t.error ? '<span class="err">' + esc(t.error) + '</span>' : "") +
-      cancelBtn +
-      '</div>' + out + '</div>';
-  }).join("");
+  if (c) {
+    if (!tasks || !tasks.length) { c.innerHTML = '<div class="muted">No recent create/clone operations.</div>'; }
+    else {
+      c.innerHTML = tasks.slice().reverse().map(t => {
+        const out = t.output ? '<pre>' + esc(t.output) + '</pre>' : "";
+        const when = fmtDateTime(t.startedAt);
+        const cancelBtn = t.status === "running"
+          ? '<button class="ghost tiny" onclick="cancelTask(\'' + esc(t.id) + '\')">✕ Cancel</button>'
+          : "";
+        return '<div class="task"><div class="task-head">' +
+          '<span class="badge ' + t.status + '">' + t.status + '</span>' +
+          '<b>' + esc(t.kind) + '</b> → <span class="mono">' + esc(t.target) + '</span>' +
+          '<span class="muted">' + esc(when) + '</span>' +
+          (t.error ? '<span class="err">' + esc(t.error) + '</span>' : "") +
+          cancelBtn +
+          '</div>' + out + '</div>';
+      }).join("");
+    }
+  }
+
+  const pullLog = document.getElementById("pullOciLog");
+  const pullLogContainer = document.getElementById("pullOciLogContainer");
+  const modal = document.getElementById("pullOciModal");
+  if (pullLog && modal && !modal.classList.contains("hidden") && Array.isArray(tasks)) {
+    const inputEl = document.getElementById("ociImageInput");
+    const currentImg = (inputEl && inputEl.value ? inputEl.value : "").trim();
+    const pullTask = tasks.slice().reverse().find(t => t.kind === "pull" && (!currentImg || t.target === currentImg)) ||
+                     tasks.slice().reverse().find(t => t.kind === "pull");
+    if (pullTask) {
+      if (pullLogContainer) pullLogContainer.classList.remove("hidden");
+      const atBottom = pullLog.scrollHeight - pullLog.scrollTop - pullLog.clientHeight < 30;
+      let text = pullTask.output || "";
+      if (pullTask.status !== "running" && pullTask.error && !text.includes(pullTask.error)) {
+        text += (text ? "\n" : "") + "Error: " + pullTask.error;
+      }
+      pullLog.textContent = text;
+      if (atBottom) pullLog.scrollTop = pullLog.scrollHeight;
+
+      const submitBtn = document.getElementById("pullOciSubmit");
+      if (submitBtn) {
+        if (pullTask.status === "running") {
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Pulling...";
+        } else {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Pull Image";
+        }
+      }
+    }
+  }
 }
 async function cancelTask(id) {
   try {
@@ -2618,10 +2753,16 @@ document.addEventListener("click", (e) => {
   }
 });
 
+el("pullOciBtn").onclick = openPullOciModal;
+el("pullOciCancel").onclick = closePullOciModal;
+el("pullOciSubmit").onclick = submitOciPull;
+q("#pullOciModal .modal-backdrop").onclick = closePullOciModal;
+
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeChangelogModal();
     closeEditModal();
+    closePullOciModal();
   }
 });
 
