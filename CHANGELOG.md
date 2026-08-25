@@ -1,538 +1,450 @@
 # Changelog
 
-This file records user-visible changes to Tart Oven. Version 1.50 introduces the
-guided First-Run Onboarding Wizard, direct in-app OCI base image pulling with live
-streaming progress, and a comprehensive 8-stage interactive Helper Guide. Version 1.40
-replaces the Jamf username line with a real MDM enrollment column. Version 1.39 fixes the guest
-agent installer against a real agentless VM. Version 1.38 makes the SSH
-fallback optional and adds a guest agent installer. Version 1.37 runs guest commands
-through the Tart guest agent instead of SSH, retires the automatic SSH key provisioning
-introduced one release earlier, and finishes removing Suspend. Version 1.36 moves the theme
-control into the header, simplifies host metrics onto a single source of truth, and
-adds opt-in automatic SSH key provisioning for guest VMs. Version 1.35 hardens the
-local API against cross-site requests, fixes several VM-lifecycle and Jamf/MDM
-correctness bugs, and makes the dashboard more resilient. Version 1.34 streamlines
-VM teardown by eliminating slow SSH graceful shutdown in favor of fast, direct
-hard stops for ephemeral testing farm workflows. Version 1.33 introduces
-robustness hardening, non-STW memory metrics, and process lifecycle safeguards.
-Version 1.32 separates OCI images from runnable local VMs and excludes them from
-scheduling by default.
+What changed in each release of Tart Oven, newest first.
+
+A few terms appear throughout:
+
+- **Guest** — a virtual machine running under Tart Oven.
+- **OCI image** — a macOS image downloaded from a registry. You pull it once and
+  clone local VMs from it; you don't run the image itself.
+- **Guest agent** — a small helper that ships inside the official macOS images. It
+  lets Tart Oven run commands inside a guest without SSH, keys, or guest networking.
+- **MDM / Jamf Pro** — the system that manages enrolled Macs. Tart Oven can prepare
+  a VM for enrollment and report whether a guest is enrolled.
 
 ## 1.50 — 2026-08-25
 
-### First-Run Onboarding Wizard & Guided Setup
-- **5-Step Interactive Stepper**: Walks first-time operators through hardware & Tart CLI verification, APFS storage confirmation, base image acquisition, operator persona configuration, and fleet launch.
-- **Empty-State Dashboard Hero Card**: Provides immediate guidance and quick action triggers (`Launch Setup Wizard`, `Pull Base Image`) when 0 local VMs are detected.
-- **Role-Based Presets**: Applies tailored defaults in one click for **🛠️ DevOps / CI** (headless on, audio off, sequential scheduling), **🍏 Jamf / Mac Admin** (random serial & MAC on, Jamf recon on, MDM column enabled), and **🧪 QA Tester** (GUI & audio on).
-- **Persistent State & Re-entry**: Persists `FirstRunCompleted` in `state.json` and adds a persistent `🚀 Setup Wizard` re-entry button in the header nav and Configuration tab.
+First-time setup is now guided, you can download images without leaving the app, and
+the built-in guide has been rewritten.
 
-### Direct OCI Image Pulling
-- **In-App Pull Modal**: Added `#pullOciModal` dialog with curated one-click preset chips for **macOS 26 (Tahoe)**, **macOS 15 (Sequoia)**, and **macOS 14 (Sonoma)**, along with custom OCI registry URI inputs.
-- **Background Streaming Execution**: Executes `tart pull` asynchronously via `POST /api/oci/pull`, streaming live layer extraction logs over SSE into an in-modal terminal window across page reloads.
-- **APFS Preflight Disk Capacity Guard**: Prevents host disk exhaustion by verifying at least 25 GiB free disk space before initiating pulls.
+### Setup wizard
 
-### 8-Stage Interactive Helper Guide Overhaul
-- **Restructured Technical Architecture**: Overhauled into 8 progressive stages covering orchestration value proposition, 5-minute quickstart, base image lifecycle, fleet operations & scheduling, Jamf Pro/MDM administration, host performance safeguards, REST/SSE API specifications, and 6 diagnostic runbooks.
-- **Mandatory Jamf Hardware Randomization Rules**: Documents the invariant rule that cloned VMs intended for MDM enrollment must have randomized serials and MACs (`tart set <vm> --random-serial --random-mac`) to prevent inventory overwrites.
-- **Interactive In-App Documentation Viewer**: Includes sticky Table of Contents sidebar with synchronized heading visibility, real-time XSS-safe search filtering, and 1-click clipboard copy buttons with LAN HTTP fallback.
+- **A five-step wizard** checks your Mac and Tart installation, confirms where VMs
+  will be stored, helps you download a base image, applies settings that match how
+  you work, and starts your first VM.
+- **A friendlier empty dashboard**: with no local VMs yet, you get a card with
+  **Launch Setup Wizard** and **Pull Base Image** instead of an empty table.
+- **Three presets**, each a handful of sensible defaults you can change afterwards:
+  **DevOps / CI** (headless, no audio, one VM at a time), **Jamf / Mac admin**
+  (random serial and MAC, Jamf recon, MDM column on), and **QA tester** (screen and
+  audio on).
+- **Reopen it any time** from **Setup Wizard** in the header or in **Configuration**.
+  Tart Oven remembers that you've finished it once.
+
+### Pull images from the dashboard
+
+- **Pull OCI Image** opens a dialog with one-click choices for macOS 26 (Tahoe),
+  macOS 15 (Sequoia), and macOS 14 (Sonoma), plus a field for any other registry
+  address.
+- **Downloads run in the background** and stream progress into the dialog. Reloading
+  the page or closing the dialog doesn't cancel the download or lose the log.
+- **Disk space is checked first**: Tart Oven wants at least 25 GiB free before it
+  starts, so a large image can't quietly fill your disk.
+
+### Rewritten Helper Guide
+
+- **Eight stages** covering what Tart Oven is for, a five-minute quickstart, working
+  with base images, running a fleet, Jamf and MDM, keeping the host healthy, the HTTP
+  API, and six troubleshooting runbooks.
+- **The Jamf rule spelled out**: clone with a randomized serial and MAC
+  (`tart set <vm> --random-serial --random-mac`), or your VMs will overwrite each
+  other's inventory records in Jamf.
+- **Easier to read**: a table of contents that follows you down the page, a search
+  box, and a copy button on every command.
 
 ## 1.40 — 2026-08-24
 
-### MDM Enrollment Column
+### MDM enrollment column
 
-- **See enrollment at a glance**: A new **MDM** column reports whether each guest is
-  enrolled — green with the **Jamf Pro URL** beneath it when it is, red when the guest
-  reports no enrollment, and grey when it has not been probed yet.
-- **Grey is not red**: A VM that has never been probed, or whose probe failed, shows
-  grey rather than red. Reporting an unchecked VM as unenrolled was the exact flaw in
-  the line this column replaces.
-- **The console URL, not the check-in endpoint**: macOS reports the MDM server as
-  `https://your-server/mdm/ServerURL`. The column shows `https://your-server` — the
-  address you would actually open — with the raw value on hover.
-- **Reliable source**: Enrollment comes from a built-in `profiles status -type
-  enrollment` probe with a fixed output shape, not from the editable Status command,
-  so editing that field cannot break the column. It runs wherever **Get info** already
-  runs, and travels over the guest agent when available.
+- **See enrollment at a glance**: a new **MDM** column reports whether each guest is
+  enrolled — green with the Jamf Pro URL beneath it when it is, red when the guest
+  reports no enrollment, and grey when it hasn't been checked yet.
+- **Grey is not red**: a VM that has never been probed, or whose probe failed, shows
+  grey. Reporting an unchecked VM as unenrolled was the exact flaw in the line this
+  column replaces.
+- **The address you'd actually open**: macOS reports the MDM server as
+  `https://your-server/mdm/ServerURL`. The column shows `https://your-server`, with
+  the raw value on hover.
+- **A reliable source**: enrollment comes from a built-in check with a fixed output
+  shape, not from the editable Status command, so editing that field can't break the
+  column. It runs wherever **Get info** already runs.
 
-### `(no Jamf user)` Removed
+### `(no Jamf user)` removed
 
-The default Status command no longer looks up `jamfProUsername`. That lookup printed
-`(no Jamf user)` whenever the read failed for **any** reason, including on VMs that
-were enrolled and managed but simply had no username-variable profile scoped to them —
-so it reported healthy, managed VMs as though they were unmanaged, and answered a
-question the MDM column now answers properly.
+The default Status command no longer looks up the Jamf username. That lookup printed
+`(no Jamf user)` whenever the read failed for *any* reason — including on VMs that
+were enrolled and managed perfectly well but had no username profile scoped to them.
+It reported healthy VMs as unmanaged, and answered a question the MDM column now
+answers properly.
 
-Existing installs are migrated automatically: a Status command matching the old default
-byte-for-byte is replaced. A command you have customised is left untouched.
+Existing installs are migrated for you: an untouched default Status command is
+replaced. One you've customised is left alone.
 
 ### Notes
 
-The **Notes** column was reassigned to make room for MDM. Notes themselves are
-unchanged and still editable per VM; they simply no longer occupy a table column.
+The **Notes** column made way for MDM. Notes themselves are unchanged and still
+editable per VM — they just no longer take up a column.
 
 ## 1.39 — 2026-08-24
 
-### Guest Agent Installer Fixes
+### Guest agent installer fixes
 
-Validated end-to-end against a genuinely agentless VM, which surfaced two defects in
-the installer shipped in 1.38.
+Testing against a VM that genuinely had no agent turned up two bugs in the installer
+shipped in 1.38.
 
-- **The installer no longer reports "Homebrew is not installed" on guests that have
-  it**: a non-interactive SSH session gets `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, which
-  contains no Homebrew prefix, so the check failed on every real guest. The script now
-  repairs `PATH` before looking for `brew`.
-- **The installed launchd jobs now match the official images exactly**: the generated
-  property lists were missing `PATH`, the agent's `WorkingDirectory`, and the log
-  paths. `PATH` in particular is load-bearing — commands run through `tart exec`
-  inherit the agent's environment, so without it anything resolved by name could fail.
-  Verified byte-for-byte against the plists the Cirrus base images ship.
+- **"Homebrew is not installed" on guests that have it**: a non-interactive SSH
+  session starts with a bare `PATH` that doesn't include Homebrew, so the check
+  failed on every real guest. The installer now repairs `PATH` before it looks.
+- **Incomplete startup files**: the launchd jobs it wrote were missing `PATH`, the
+  agent's working directory, and its log paths. `PATH` matters most — commands you
+  run through the agent inherit its environment, so anything called by name could
+  fail. The generated files now match the official images exactly.
 
 ### Documentation
 
-- The in-app **Helper Guide** and README now describe the guest agent as the primary
-  path for guest commands, with SSH as the fallback, instead of walking every user
-  through SSH key setup they usually do not need.
-- Documented the **Install agent** action, the **Allow SSH fallback** setting, and the
-  requirement that the SSH identity file be an absolute or `~/`-rooted path.
-- The API reference lists the endpoints added since it was last revised, including
-  `/api/vm/install-agent`, `/api/vm/mdm-profile`, `/api/vm/clear-boot-failure`, and
-  `/api/refresh`, and no longer describes `/api/exec` as SSH-only.
-- Corrected the red status-bubble troubleshooting entry, which advised checking SSH
-  credentials for a condition the guest agent now usually handles.
+- The **Helper Guide** and README now present the guest agent as the normal way to
+  run guest commands, with SSH as the fallback, instead of walking everyone through
+  SSH key setup they probably don't need.
+- Documented the **Install agent** action, the **Allow SSH fallback** setting, and
+  the requirement that the SSH identity file be a full path (or start with `~/`).
+- The API reference lists the endpoints added since it was last revised, and no
+  longer describes `/api/exec` as SSH-only.
+- Fixed the red status-bubble troubleshooting entry, which told you to check SSH
+  credentials for something the guest agent now usually handles.
 
 ## 1.38 — 2026-08-24
 
-### SSH Is Now Optional
+### SSH is now optional
 
-- **Allow SSH fallback for guest commands**: A new setting under **Configuration → SSH
-  & Commands**, on by default. Turn it off and Tart Oven talks to guests **only** through
-  the Tart guest agent — if a guest does not answer, you get a clear message naming that
-  instead of a silent SSH attempt.
-- **The SSH setup guide disappears when it cannot apply**: With the fallback off, the
-  **SSH setup guide** panel and the **SSH identity file** field are hidden. Previously
-  the guide was always on screen in VM Management even for fleets where every VM uses
-  the agent and none of it applied.
-- **Deploy MDM Profile is unaffected**: Jamf enrollment copies a file over SFTP, which
-  the guest agent cannot do, so that path keeps using SSH regardless of this setting.
-  The default SSH username and password stay visible because it still needs them.
+- **Allow SSH fallback for guest commands**: a new setting under **Configuration →
+  SSH & Commands**, on by default. Turn it off and Tart Oven talks to guests only
+  through the guest agent — if a guest doesn't answer, you get a clear message saying
+  so instead of a silent SSH attempt.
+- **The SSH setup guide hides itself** when it can't apply. With the fallback off,
+  the **SSH setup guide** panel and the **SSH identity file** field disappear.
+  Previously the guide sat in VM Management even for fleets where nothing in it
+  applied.
+- **Deploy MDM Profile is unaffected**: Jamf enrollment copies a file over SFTP,
+  which the guest agent can't do, so that path keeps using SSH either way. The
+  default SSH username and password stay visible because it still needs them.
 
-### Install the Guest Agent From the Dashboard
+### Install the guest agent from the dashboard
 
-- **Install agent**: A running VM whose commands fell back to SSH now offers an **Install
-  agent** action. It installs `tart-guest-agent` through Homebrew inside the guest, sets
-  up its two launchd jobs, and then **verifies the agent actually answers** before
-  reporting success — rather than trusting the install output.
-- Progress streams to the **Activity** panel. The action needs the guest's SSH password
-  and sudo, because the agent is exactly what is missing and so cannot install itself.
-  It is intended for preparing a base image before cloning.
+- **Install agent**: a running VM whose commands fell back to SSH now offers an
+  **Install agent** action. It installs the agent through Homebrew inside the guest,
+  sets up its two startup jobs, and then checks that the agent actually answers
+  before reporting success — rather than trusting the install output.
+- Progress streams to the **Activity** panel. The action needs the guest's SSH
+  password and sudo, because the agent is the very thing that's missing and can't
+  install itself. It's meant for preparing a base image before you clone it.
 
 ## 1.37 — 2026-08-24
 
-### Guest Commands Run Through the Tart Guest Agent
+### Guest commands run through the guest agent
 
-- **No SSH Required**: **Get info** and **Send command** now run through the Tart guest
-  agent over a virtual socket — no SSH, no key, no password, no `authorized_keys`, and no
-  guest networking. Exit codes, stdout/stderr, and `sudo` all behave as before. The
-  official `ghcr.io/cirruslabs/macos-*-base` images ship the agent preinstalled.
-- **SSH Fallback Retained**: Guests without the agent (for example `vanilla-*` images)
-  still work over SSH exactly as before. Each VM row shows whether **agent** or **ssh**
-  answered, so the active path is visible at a glance.
-- **More Reliable Boot IP Resolution**: VM IPs are now resolved with Tart's `agent`
-  resolver first — the one Tart documents as working reliably in all cases, and which
-  needs no guest network traffic — before the existing host ARP matching.
-- **Removed an Unusable Resolver Tier**: The `dhcp` resolver only works for VMs that are
-  *not* bridged, and Tart Oven always runs bridged, so that tier could never succeed. It
-  has been dropped from the chain.
+- **No SSH required**: **Get info** and **Send command** now run through the guest
+  agent over a virtual socket — no SSH, no key, no password, no `authorized_keys`,
+  no guest networking. Exit codes, output, and `sudo` behave as before. The official
+  `ghcr.io/cirruslabs/macos-*-base` images ship the agent preinstalled.
+- **SSH still works**: guests without the agent (`vanilla-*` images, for example)
+  fall back to SSH exactly as before. Each VM row shows whether **agent** or **ssh**
+  answered, so you can see which path is in use.
+- **More reliable IP at boot**: VM addresses are resolved with Tart's `agent`
+  resolver first — the one Tart documents as working in all cases, needing no guest
+  network traffic — before falling back to matching against the host's ARP table.
+- **One dead end removed**: the `dhcp` resolver only works for VMs that aren't
+  bridged, and Tart Oven always runs bridged, so it could never succeed. It's gone.
 
-### Automatic SSH Key Provisioning Removed
+### Automatic SSH key provisioning removed
 
-The feature added in 1.36 has been withdrawn. It existed to work around Tart Oven's own
-key-only SSH setting, which the guest agent makes unnecessary. It also had two defects
-worth naming: it re-provisioned every running VM roughly every 40 seconds instead of once,
-and it skipped `TEMPLATE` VMs — the exact VMs its own setup guide told you to use.
+The feature added in 1.36 has been withdrawn. It existed to work around Tart Oven's
+own key-only SSH setting, which the guest agent makes unnecessary. It also had two
+bugs worth naming: it re-provisioned every running VM roughly every 40 seconds
+instead of once, and it skipped `TEMPLATE` VMs — the exact VMs its own setup guide
+told you to use.
 
 The **Install the SSH key on new VMs automatically** setting is gone. Tart Oven still
-generates an SSH key when one is missing, for the SSH fallback, but never installs it into
-a guest by itself.
+generates an SSH key when one is missing, for the fallback, but never installs it
+into a guest on its own.
 
 ### Fixes
 
-- **SSH Identity File**: No longer labeled "(optional)" — it is required whenever the SSH
-  fallback is used. A blank value is now repaired from the default on load, and a relative
-  path such as `tart-oven` is rejected instead of being silently resolved against the
-  server's working directory (`/` under the LaunchAgent), where it would have written a
-  private key.
-- **Editing Notes No Longer Clears a VM's SSH Username**: Saving notes from the dashboard
-  row previously wiped any custom per-VM SSH username, because the editor omits that
-  field. A blank submission now means "leave unchanged", matching the password field.
-- **Correct Guide Pointer**: The red status indicator pointed at Configuration; the SSH
-  setup guide is in VM Management.
+- **SSH identity file** is no longer labelled "(optional)" — it's required whenever
+  the SSH fallback is used. A blank value is repaired from the default on load, and a
+  relative path such as `tart-oven` is rejected instead of being quietly resolved
+  against the server's working directory (`/`), where it would have written a private
+  key.
+- **Editing notes no longer clears a VM's SSH username.** Saving notes from the
+  dashboard row used to wipe any custom per-VM username, because the editor doesn't
+  include that field. A blank submission now means "leave unchanged", matching how
+  the password field already worked.
+- **Correct pointer in the guide**: the red status indicator pointed at
+  Configuration; the SSH setup guide lives in VM Management.
 
-### Suspend Fully Removed
+### Suspend fully removed
 
-The Suspend button was removed in 1.34, but the endpoint, the `suspending`/`suspended`
-states, and the guards around them remained — so a VM suspended by any means became
-unusable: no Resume, Stop disabled, and Edit, Rename, and Delete all refused. The endpoint,
-`doSuspend`, both states, and every guard are now gone, and any VM already stuck in that
-state can be stopped and reused normally.
+The Suspend button went away in 1.34, but the endpoint and the suspended states
+stayed behind — so a VM suspended by any means became unusable: no Resume, Stop
+disabled, and Edit, Rename, and Delete all refusing. All of it is now gone, and any
+VM stuck in that state can be stopped and reused normally.
 
 ## 1.36 — 2026-08-24
 
-### Automatic SSH Key Provisioning (Opt-In)
+### Automatic SSH key provisioning (opt-in)
 
-- **Hands-Off Guest Access**: New **Install the SSH key on new VMs automatically**
-  setting under **Configuration → SSH**. When enabled, Tart Oven installs its public
-  key into each running VM's `~/.ssh/authorized_keys` about a minute after boot, so
-  **Send command** and **Get info** work without running `ssh-copy-id` per VM.
-- **Key Generation**: If the configured SSH identity file does not exist, Tart Oven
-  generates an ed25519 keypair in place (private key `0600`, public key `0644`). An
-  existing key is never overwritten.
-- **Never Repeats Itself**: Provisioning is gated on whether key authentication
-  already works, so a VM that already accepts the key — including clones that
-  inherited it from a TEMPLATE — is never touched. A guest that loses the key gets it
-  back on its next boot, with no per-VM bookkeeping to go stale.
-- **Boot-Aware Retries**: Waits 30 seconds for the guest to finish booting, then
-  retries with backoff up to 10 minutes. A guest that rejects the stored credentials
-  stops immediately and reports the failure instead of retrying.
-- **Safe by Default**: Ships disabled. Honors the scheduler exclude list, skips
-  TEMPLATE VMs and OCI images, appends to `authorized_keys` without disturbing keys
-  the guest already trusts, and never transmits the private key.
+> Withdrawn in 1.37. The guest agent made it unnecessary.
 
-### Header & Theme
+- **Hands-off guest access**: a new **Install the SSH key on new VMs automatically**
+  setting. When enabled, Tart Oven installs its public key into each running VM about
+  a minute after boot, so **Send command** and **Get info** work without running
+  `ssh-copy-id` on every VM.
+- **Key generation**: if the configured identity file doesn't exist, Tart Oven
+  creates one. An existing key is never overwritten.
+- **Never repeats itself**: provisioning is skipped when key login already works, so
+  a VM that already accepts the key — including clones that inherited it — is left
+  alone. A guest that loses the key gets it back on its next boot.
+- **Boot-aware retries**: waits 30 seconds for the guest to finish booting, then
+  retries with backoff for up to 10 minutes. A guest that rejects the stored
+  credentials stops immediately and reports the failure rather than retrying.
+- **Safe by default**: ships disabled, honours the scheduler exclude list, skips
+  TEMPLATE VMs and OCI images, adds to `authorized_keys` without disturbing keys the
+  guest already trusts, and never sends the private key anywhere.
 
-- **Theme Toggle in the Header**: Light/dark mode moved out of Configuration into a
-  single button in the top header, where it belongs — it was always a per-browser
-  display preference, never a server setting.
-- **Memory Pressure at a Glance**: The header now reports CPU, RAM, and macOS memory
-  pressure. VM disk capacity remains on the Performance tab, where its chart gives it
-  context.
-- **Single Source of Truth for Host Metrics**: Removed the duplicated `HostStats`
-  structure. The dashboard state now carries the latest performance sample directly,
-  so header and charts can no longer disagree. Each metric falls back independently
-  when its source is unavailable.
-- **Fewer Redundant Fetches**: The Performance tab re-downloads its 24-hour history
-  only when a new sample actually exists, instead of on every live update.
+### Header and theme
 
-> **API note:** `/api/vms` and the live event stream replace the `hostStats` object
-> with `performance`, which carries the full sample. The dashboard is the only
-> consumer of this field.
+- **Theme toggle moved to the header.** Light/dark is a per-browser display
+  preference, not a server setting, so it no longer lives in Configuration.
+- **Memory pressure at a glance**: the header now shows CPU, RAM, and macOS memory
+  pressure. VM disk capacity stays on the **Performance** tab, where its chart gives
+  it context.
+- **Header and charts can no longer disagree.** They now read the same performance
+  sample. Each metric falls back independently when its source is unavailable.
+- **Fewer redundant fetches**: the Performance tab re-downloads its 24-hour history
+  only when there's actually a new sample.
+
+> **API note:** `/api/vms` and the event stream replace the `hostStats` object with
+> `performance`, which carries the full sample. The dashboard is the only consumer of
+> this field.
 
 ## 1.35 — 2026-08-24
 
-### Security Hardening
+### Security
 
-- **Cross-Origin Request Protection**: All state-changing endpoints now reject
-  requests carrying a cross-origin `Origin` header. This blocks a malicious web
-  page open in the operator's browser from silently driving the local API
-  (running commands on guests, deleting VMs, or rewriting config) via forged
-  cross-site POSTs. Same-origin dashboard requests and non-browser clients are
-  unaffected.
-- **Safe Tart Install/Update Path**: The install/update flow now only replaces a
-  derived directory when it is an actual `tart.app` bundle, so a crafted
-  `tartAppPath` can no longer make the updater delete an arbitrary directory.
+- **Other websites can't drive your dashboard.** Every endpoint that changes
+  something now rejects requests that come from another site. This blocks a malicious
+  page open in your browser from quietly running guest commands, deleting VMs, or
+  rewriting your config. The dashboard itself and non-browser clients such as `curl`
+  are unaffected.
+- **Safer Tart install and update.** The updater now replaces a directory only when
+  it really is a `tart.app` bundle, so a crafted path can't make it delete something
+  else.
 
-### VM Lifecycle & SSH Fixes
+### VM lifecycle and SSH
 
-- **Rename Preserves Per-VM State**: Renaming a VM now carries over its
-  server-side notes, tags, and (write-only) SSH credentials to the new name
-  instead of silently dropping them, so later SSH and MDM operations keep working.
-- **Long SSH Commands No Longer Cut Off**: The **Send command** and **Get info**
-  panels no longer inherit the SSH *connect* timeout as an overall deadline, so a
-  legitimately long guest command (e.g. `softwareupdate`) runs to completion. A
-  dead connection is still dropped quickly by SSH keepalives.
-- **Robust On-Demand IP Resolution**: **Get info**, **Send command**, and **Deploy
-  MDM Profile** now use the same multi-tier IP resolver as VM boot (host ARP-table
-  match plus Tart resolvers), so they succeed after a restart or for VMs started
-  outside Tart Oven, not just at boot.
+- **Rename keeps per-VM state.** Renaming a VM carries its notes, tags, and SSH
+  credentials across instead of silently dropping them, so later SSH and MDM
+  operations keep working.
+- **Long guest commands are no longer cut off.** **Send command** and **Get info** no
+  longer treat the SSH *connect* timeout as an overall deadline, so something slow but
+  legitimate — `softwareupdate`, say — can run to completion. A genuinely dead
+  connection is still dropped quickly.
+- **On-demand IP lookup is as robust as boot.** **Get info**, **Send command**, and
+  **Deploy MDM Profile** now use the same resolver chain as VM boot, so they work
+  after a restart or for VMs started outside Tart Oven — not just right after boot.
 
-### Jamf / MDM Correctness
+### Jamf and MDM
 
-- **Unknown Profile Selection Errors Safely**: Deploying with a Jamf profile that
-  no longer exists (e.g. a stale dropdown after the profile was deleted in another
-  tab) now returns a clear error instead of silently enrolling the VM into the
-  legacy default server.
-- **Legacy Invitation Code Preserved**: Saving the Jamf profiles list no longer
-  drops a legacy single-server invitation code when the migrated "default" profile
-  is saved without re-entering it.
+- **A missing Jamf profile fails loudly.** Deploying with a profile that no longer
+  exists — a stale dropdown after it was deleted in another tab — now returns a clear
+  error instead of quietly enrolling the VM into the old default server.
+- **Legacy invitation codes survive a save.** Saving the Jamf profiles list no longer
+  drops an older single-server invitation code.
 
-### Dashboard Reliability
+### Dashboard reliability
 
-- **Crash-Resistant Control Bindings**: Dashboard event bindings are now guarded,
-  so a removed or renamed UI element can no longer throw during startup and blank
-  the entire dashboard (loss of live updates, tabs, and buttons).
-- **Filters No Longer Commit Unsaved Settings**: Toggling **Show running only** or
-  **Pause** now sends only the field it changes, instead of committing every
-  half-edited Settings field, and the Pause control no longer risks unpausing the
-  scheduler before the first live update arrives.
-- **Removed Dead Shutdown Settings**: The **Shutdown command (SSH)** and **Shutdown
-  wait timeout** settings, which no longer had any effect after 1.34's fast-stop
-  change, were removed so the UI no longer advertises behavior that does not run.
-- **SSE Snapshot Data Race Fixed**: The dashboard state snapshot now copies task
-  and log data before serializing it, eliminating a data race with in-flight
-  create/clone task output.
+- **One broken control can't blank the page.** Dashboard event bindings are guarded,
+  so a removed or renamed element can no longer throw during startup and take live
+  updates, tabs, and buttons down with it.
+- **Filters don't commit unsaved settings.** Toggling **Show running only** or
+  **Pause** now sends only the field you changed, instead of committing every
+  half-edited Settings field along with it.
+- **Dead settings removed.** **Shutdown command (SSH)** and **Shutdown wait timeout**
+  stopped doing anything in 1.34, so the UI no longer advertises them.
+- **Fixed a rare crash** when the dashboard sent an update while a create or clone
+  task was still writing its output.
 
 ## 1.34 — 2026-08-24
 
-### Multi-Server Jamf Pro Profiles & Targeted MDM Deployment
+### Multiple Jamf Pro servers
 
-- **Multiple Named Jamf Server Profiles**: Manage and persist multiple Jamf Pro
-  environments (e.g. Production, Staging, Sandbox) in a dedicated configuration list
-  with custom server names, base URLs, and securely masked invitation codes.
-- **Dedicated Deploy MDM Profile Panel**: Select any running base VM, choose the target
-  Jamf server profile from a dropdown, and optionally override guest SSH credentials
-  to push the generated `.mobileconfig` directly to `~/Desktop/mdm_enroll.mobileconfig`.
-- **Safe Partial Configuration Updates**: Fixed a bug where updating Jamf or SSH settings
-  would reset unsubmitted configuration fields and trigger unintended scheduler ticks.
-  Configuration updates now safely decode via `map[string]json.RawMessage` and merge
-  only explicitly submitted fields while preserving existing secrets.
+- **Named server profiles**: keep several Jamf environments — Production, Staging,
+  Sandbox — in one list, each with its own name, base URL, and masked invitation
+  code.
+- **Deploy MDM Profile panel**: pick a running base VM, pick the Jamf server,
+  optionally override the guest SSH credentials, and push the generated
+  `.mobileconfig` to `~/Desktop/mdm_enroll.mobileconfig` in the guest.
+- **Partial saves stopped clobbering other settings.** Updating Jamf or SSH settings
+  used to reset fields you hadn't submitted and kick the scheduler. Updates now merge
+  only what you actually changed and keep existing secrets.
 
-### Darwin Bridged VM Boot IP Resolution Fix
+### Fixes
 
-- **Robust ARP Resolution with `parseFlexMAC`**: Fixed VM boot IP resolution failures
-  on macOS where Darwin ARP output (`/usr/sbin/arp -an`) uses single-digit hex octets
-  (e.g., `74:ac:b9:46:6b:4`). Added `parseFlexMAC` normalization and multi-tier IP
-  probing (`hostARPNeighbors`, `tart ip --resolver arp`, and direct Tart fallback).
+- **VMs failing to get an IP at boot.** On some Macs the address lookup returned
+  nothing because of how macOS formats short values in its ARP table, and boot was
+  reported as failed. Tart Oven now handles that format and tries several lookup
+  methods in turn.
 
-### UI Streamlining & Dashboard Hardening
+### Dashboard
 
-- **Removed Suspend Action**: Streamlined the Dashboard table row actions to focus
-  on essential controls: **Run**, **Stop**, **Get info**, **Screen**, and **Edit**.
-- **DOM Null-Safety Hardening**: Added null-safety across `fillConfig`, `readConfig`,
-  and secret placeholder setters to ensure the live dashboard and scheduler controls
-  hydrate immediately without client-side script interruptions.
-- **Fast Stop (`tart stop -t 5`)**: Standard stop action terminates VMs rapidly via
-  `tart stop -t 5` with immediate process kill fallback for ephemeral VM test farms.
-- **Interactive Changelog Popup Modal**: View changelogs in-place via a responsive
-  popup modal without page navigation.
-- **Signed Installer Package (`~/Downloads`)**: `./packaging/build-pkg.sh` signs the
-  app binary and installer with Developer ID certificates and exports directly to
-  `~/Downloads/TartOven-1.34.pkg`.
+- **Simpler row actions**: **Run**, **Stop**, **Get info**, **Screen**, and **Edit**.
+  Suspend was removed.
+- **Fast stop.** Stop now terminates a VM quickly, with a force-kill fallback, which
+  suits short-lived test VMs. If your work is data-sensitive, shut the guest down
+  from inside first.
+- **Changelog in a popup** — read it without leaving the page. Hello.
+- **Signed installer package**: `./packaging/build-pkg.sh` signs the binary and the
+  installer and writes the result to `~/Downloads`.
+- **A more forgiving dashboard**: missing UI elements no longer interrupt the scripts
+  that fill in configuration and scheduler controls.
 
 ## 1.33 — 2026-08-24
 
-### Robustness & Process Safety
+A maintenance release, mostly under the hood.
 
-- **SSH Execution Deadlines**: `sshExec` now enforces an explicit context deadline
-  derived from the configured `SSHTimeoutSec` (with a 15-second buffer, defaulting to
-  120s). This prevents the scheduler and monitor loops from hanging indefinitely when
-  guest VMs stall, crash, or drop network connectivity during boot probes or commands.
-- **SSH Argument Delimiter**: `sshExecContext` now injects the standard POSIX `--`
-  argument delimiter before positional `user@ip` operands to guard against option injection.
-- **Process Handle Reaper Race Guard**: The asynchronous `cmd.Wait()` reaper closure
-  pins the specific `*exec.Cmd` instance, ensuring rapid VM restarts do not inadvertently
-  delete newly spawned process handles from the manager's live command map.
-- **Log Rotation Error Handling**: `rotatingWriter` now safely checks file descriptors
-  and captures errors when opening rotated `.1` log files.
-- **MDM SFTP Path Containment**: Added path sanitization and `../` traversal checks
-  in the remote SFTP file management operations.
-- **Panic-Free MDM Profile Escaping**: Replaced panicking XML escaping with proper
-  error propagation in MDM profile XML synthesis.
-
-### Performance & Resource Optimization
-
-- **Non-STW Memory Safeguard Metrics**: Replaced `runtime.ReadMemStats` with lock-free
-  atomic `runtime/metrics.Read` for `/memory/classes/heap/idle:bytes` and
-  `/memory/classes/heap/released:bytes`, eliminating global Stop-The-World (STW) pauses
-  during periodic memory safeguard evaluations.
-- **Struct Alignment Optimization**: Reordered struct fields in `PerformanceSample`
-  by descending byte size to eliminate CPU alignment padding across the 1,440-entry
-  telemetry history buffer while preserving exact JSON schema compatibility.
+- **Stalled guests no longer hang the scheduler.** SSH commands now have a real
+  deadline based on your configured SSH timeout, so a guest that crashes or drops off
+  the network during a boot probe or command can't stall the loops behind it.
+- **Safer MDM file transfers**: remote paths are checked, and `../` can't be used to
+  climb out of the destination directory.
+- **A failure generating an MDM profile now reports an error** instead of taking the
+  process down with it.
+- **Log rotation handles errors** rather than failing silently.
+- **Rapid restarts are safe.** Restarting a VM in quick succession no longer risks
+  losing track of the newly started process.
+- **Lighter memory measurement.** The periodic memory check no longer briefly pauses
+  the rest of Tart Oven while it runs.
 
 ## 1.32 — 2026-08-23
 
-### Local VM and OCI image separation
+### OCI images and local VMs are now separate
 
-- Tart Oven now preserves Tart's `Source`, `Disk`, `Size`, and `Accessed`
-  metadata from both JSON list output and the older table fallback.
-- The Dashboard separates **Local VMs** from **OCI Images**. Local VMs retain
-  all existing lifecycle, SSH, notes, and recovery actions.
-- OCI rows show the complete registry reference, cached size, virtual-disk
-  size, and last-accessed value. Their only action is **Clone**.
-- The OCI Clone action opens VM Management in clone mode and selects the exact
-  tag or digest reported by Tart.
-- Search filters both sections. **Show running only** hides OCI Images and
-  shows only active local VMs.
-- Edit, delete, Jamf preparation, and other local-only selectors exclude OCI
-  entries. The clone-source selector includes both local VMs and OCI images.
+- **Two sections on the Dashboard.** **Local VMs** keep every existing action.
+  **OCI Images** show the full registry reference, cached size, virtual disk size,
+  and when they were last used — and their only action is **Clone**.
+- **Clone knows what you clicked.** Cloning an OCI row opens VM Management in clone
+  mode with the exact tag or digest already selected.
+- **Search covers both sections.** **Show running only** hides OCI images and shows
+  only active local VMs.
+- **Local-only actions stay local.** Edit, delete, and Jamf preparation exclude OCI
+  entries. The clone-source picker offers both.
 
-### Scheduler behavior and upgrades
+### Scheduler
 
-- Added `excludeOciFromScheduler`, enabled by default for new installations and
-  existing state files that predate the setting.
-- With the setting enabled, the scheduler skips entries whose Tart source is
-  `OCI`, case-insensitively. Local and unknown legacy sources retain their
-  previous behavior, and existing per-name/template exclusions still apply.
-- An explicit disabled value is preserved across restarts, allowing an
-  operator to opt OCI entries back into scheduling when desired.
-- Tart reports a clone as a local VM and does not expose its original OCI
-  source in `tart list`; Tart Oven therefore does not claim unavailable clone
-  provenance.
+- **OCI images are excluded from scheduling** by default, including on existing
+  installs that predate the setting. You can turn that off if you want them back in
+  rotation, and the choice survives restarts.
+- Per-VM and per-template exclusions work as before.
 
-### API and testing
+A note on provenance: Tart reports a clone as a local VM and doesn't say which OCI
+image it came from, so neither does Tart Oven.
 
-- `/api/vms` now exposes `source`, `disk`, `size`, and `accessed` for entries
+### API
+
+- `/api/vms` now includes `source`, `disk`, `size`, and `accessed` for entries
   discovered through Tart.
-- Added tests for JSON and table metadata, reconciliation, upgrade-safe config
-  migration, scheduler eligibility, Dashboard grouping, clone-only OCI rows,
-  running-filter behavior, and local-only management selectors.
 
 ## 1.31 — 2026-08-23
 
 ### Memory-pressure safeguards
 
-- New VM starts are deferred while the latest available macOS kernel-pressure
-  sample is Critical. The gate covers scheduled and manual starts, leaves
-  running VMs untouched, and clears when a later sample reports Warning or
-  Normal.
-- An unavailable pressure sample keeps the last available state instead of
-  clearing a Critical gate after a transient collection failure.
-- The Performance pressure card explains when start deferral is active.
-- Tart Oven never invokes macOS `purge`; active VM memory is not treated as a
-  file-cache cleanup problem.
-- After create and clone tasks, Tart Oven measures its own idle Go heap and
-  calls `debug.FreeOSMemory()` only when at least 64 MiB is eligible to be
-  returned to macOS. Go's normal background scavenging handles smaller values.
+- **New VMs wait when the host is under critical memory pressure.** This covers both
+  scheduled and manual starts. Running VMs are left alone, and the gate clears as soon
+  as pressure drops back to warning or normal.
+- **A missed reading doesn't unlock the gate.** If a pressure sample can't be taken,
+  the last known state stands.
+- **The Performance card tells you** when starts are being deferred.
+- **No `purge`.** Tart Oven never runs macOS's `purge` command — memory held by
+  running VMs is not a stale file cache, and treating it as one doesn't help.
+- **The VM editor suggests lowering memory** in small, tested steps when host
+  pressure warrants it. Tart Oven never changes VM memory for you; changes apply on
+  the next boot.
 
-### VM recovery controls
+### Recovery controls
 
-- Added per-running-VM **Suspend** and **Graceful shutdown** actions.
-- Suspend uses `tart suspend` and reports unsupported or failed snapshots on
-  the VM without falling back to Stop.
-- Graceful shutdown sends the configured SSH shutdown command, waits for the
-  guest to stop, and leaves it running with a visible error if shutdown cannot
-  be confirmed. Its timeout covers on-demand IP resolution and SSH execution.
-  It never calls `tart stop` or kills the Tart process.
-- The existing Stop path is unchanged: it retains its current SSH-first flow,
-  Tart fallback, scheduler behavior, and final force-kill fallback.
-- Suspended VMs remain protected from configuration, rename, and delete
-  operations until they are resumed and stopped normally.
-- The stopped-VM editor now suggests lowering VM memory in small tested steps
-  when host pressure warrants it. Tart Oven never changes VM memory
-  automatically; changes apply on the next boot.
+> Suspend was removed again in 1.34 and fully cleaned up in 1.37.
 
-### API and testing
-
-- Added `POST /api/suspend` and `POST /api/graceful-shutdown`.
-- Added tests for measured Go-heap release, critical-pressure start deferral,
-  suspend/graceful command isolation, route registration, suspended-state
-  safety, running-only UI controls, and release consistency.
+- Added per-VM **Suspend** and **Graceful shutdown** actions.
+- **Graceful shutdown** sends the configured shutdown command, waits for the guest to
+  stop, and leaves it running with a visible error if it can't confirm. It never kills
+  the VM behind your back.
+- **Stop is unchanged**, including its fallbacks.
+- Suspended VMs are protected from configuration, rename, and delete until they're
+  resumed and stopped normally.
 
 ## 1.30 — 2026-08-22
 
 ### Host performance monitoring
 
-- Added the **Performance** tab with current-value cards and retained charts
-  for actual host CPU utilization, physical memory use, macOS kernel memory
-  pressure, system-disk capacity, Tart VM-storage capacity, aggregate disk
-  read/write throughput, uptime, and the latest sample time.
-- Samples are taken at startup and then every 60 seconds. The in-memory history
-  holds at most 1,440 samples (up to 24 hours) and resets when Tart Oven
-  restarts; performance samples are not saved to `state.json`.
-- Added `GET /api/performance`, returning the latest sample and a copy of the
-  retained performance history for the dashboard.
-- Replaced the load-average CPU display with actual current CPU utilization.
-- Replaced shell-based host-stat collection with native in-process collection.
-  Performance monitoring requires no external runtime service, agent, or
-  dashboard asset.
-- Individual unavailable metrics are shown as **Unavailable** without hiding
-  independently collected metrics. Green, amber, and red status colours are
-  visual-only and do not trigger alerts, scheduling, or VM actions.
+- **A new Performance tab** with current values and charts for host CPU, physical
+  memory in use, macOS memory pressure, system disk capacity, Tart VM storage
+  capacity, disk read/write throughput, uptime, and the time of the latest sample.
+- **Samples every 60 seconds**, starting at launch. History holds up to 24 hours and
+  resets when Tart Oven restarts — performance data isn't saved to disk.
+- **Real CPU utilization** replaces the old load-average display.
+- **No extra moving parts.** Metrics are collected in-process; there's no external
+  service, agent, or dashboard asset to install.
+- **Unavailable metrics say so** and don't hide the ones that did collect. The green,
+  amber, and red colours are informational — they never trigger alerts or act on your
+  VMs.
+- Added `GET /api/performance`.
 
 ## 1.29 — 2026-08-21
 
-### Jamf base-image preparation
+### Prepare a base VM for Jamf
 
-- Added **VM Management → Prepare base VM for Jamf**.
-- Added saved settings for the Jamf Pro base URL, invitation ID, default SSH
-  username, and default SSH password.
-- Added a target selector that shows running VMs only. The UI explains the
-  intended workflow: prepare one running base image, install and configure its
-  profile, stop it, and create later VMs by cloning that base.
-- Added password-field saved-state indicators. Invitation IDs and passwords
-  are cleared from the input fields after saving, while masked dots indicate
-  that a value is already stored.
-- Added global SSH credentials, defaulting to `admin` / `admin`. Existing
-  per-VM SSH credentials take precedence when configured.
+- **VM Management → Prepare base VM for Jamf** generates an enrollment profile from
+  your saved Jamf Pro base URL and invitation ID and copies it to the guest's Desktop
+  as `mdm_enroll.mobileconfig`.
+- **The target picker shows running VMs only**, and the panel explains the intended
+  workflow: prepare one running base image, stop it, and clone it — so each new VM
+  gets the file without inheriting an already-enrolled identity.
+- **Global SSH credentials** default to `admin` / `admin`. Per-VM credentials win
+  where they're set.
+- **The transfer is verified.** Tart Oven reads the file back from the guest and
+  confirms it's byte-for-byte identical before reporting success, and each stage —
+  configuration, VM selection, IP lookup, SSH authentication, upload, verification —
+  reports its own clear failure.
+- **No external `ssh` or `scp`.** The transfer uses a built-in SSH/SFTP client, so
+  behaviour doesn't depend on what's installed on your Mac.
+- **Duplicate requests are blocked** while a copy is already running.
+- Added `POST /api/vm/mdm-profile`.
 
-### Profile generation and transfer
+What Tart Oven does *not* do: install the profile inside the guest, stop the prepared
+base VM, or create the clones. Those stay your call. The guest must be running,
+reachable, and have Remote Login enabled before the copy.
 
-- Added generation of `mdm_enroll.mobileconfig` using the saved Jamf base URL
-  and invitation ID. The enrollment endpoint is
-  `<jamf-base-url>/enroll/profile` and each profile receives a cryptographically
-  random payload UUID.
-- Added structural validation of the generated plist before transfer,
-  including required payload keys, enrollment values, UUIDs, and XML escaping.
-- Added an in-process SSH/SFTP client using Go modules. Tart Oven does not call
-  external `ssh` or `scp` binaries, so behavior does not depend on shell paths
-  or locally installed command versions.
-- Added password-authenticated transfer to
-  `~/Desktop/mdm_enroll.mobileconfig` with file mode `0600`.
-- Added post-transfer verification: Tart Oven reads the remote file back and
-  checks that it is byte-for-byte identical and contains the generated UUID.
-- Added cancellation and a shared transfer deadline across TCP connection,
-  SSH authentication, SFTP setup, upload, and verification.
-- Added clear failure stages for configuration, VM selection, IP resolution,
-  SSH authentication, SFTP upload, and remote verification.
-- Added `POST /api/vm/mdm-profile` with body `{ "name": "<running-vm>" }`.
-  Successful responses include the VM name, destination path, and payload UUID.
-- Prevented duplicate profile-copy requests from the dashboard while a copy is
-  already in progress.
+### Secrets
 
-### Configuration and secret handling
-
-- Jamf invitation IDs and SSH passwords are write-only in client-facing API
-  responses and VM snapshots.
-- Blank password or invitation-code submissions preserve the previously saved
-  value instead of erasing it.
-- Stored-secret flags let the dashboard show that a value exists without
-  returning the value itself.
-- The state file remains local at `~/.tart-oven/state.json` and is written with
-  owner-only permissions. These credentials are intended for ephemeral VM
-  workflows and are not placed in logs or error responses.
-- Jamf base URLs are trimmed and validated as HTTP or HTTPS URLs with a real
-  hostname. The dashboard displays backend validation errors safely as text.
+- **Invitation IDs and SSH passwords are write-only** in API responses. The dashboard
+  is told that a value exists, never what it is.
+- **Blank means unchanged.** Submitting an empty password or invitation code keeps
+  the saved one instead of erasing it.
+- Values live in `~/.tart-oven/state.json`, written owner-only. They're meant for
+  short-lived VM workflows, and they're kept out of logs and error messages.
+- **Jamf base URLs are validated** as real HTTP or HTTPS addresses.
 
 ### VM boot reliability
 
-- Fixed bridged VMs being stopped almost immediately with
-  `boot failure: no IP after 60s`, even though `tart run` had started correctly.
-- Root cause: when Tart was launched below the Go LaunchAgent on the affected
-  macOS host, its `arp -an` subprocess returned empty output. Tart treated that
-  parser error as final even when `tart ip --wait 60` was requested. Tart Oven
-  then interpreted the early command failure as a full boot timeout and killed
-  the running VM.
-- Tart Oven now owns the boot deadline, reads macOS's native routing information
-  base through `golang.org/x/net/route`, and matches the VM MAC address from
-  Tart's `config.json` to the host neighbor table.
-- IP discovery is retried until an address appears or the configured boot
-  deadline expires. Context cancellation is checked before and after every
-  probe.
-- VM names used for config lookup are restricted to a single safe path
-  component, including explicit rejection of `..` traversal.
+- **Fixed: bridged VMs stopped seconds after starting** with
+  `boot failure: no IP after 60s`, even though the VM had started correctly.
 
-### Testing and verification
+  The cause was on the host: when Tart ran underneath Tart Oven's background agent,
+  its address-lookup subprocess came back empty, and Tart treated that as final even
+  when asked to wait. Tart Oven read that as a full boot timeout and killed a
+  perfectly healthy VM.
 
-- Added tests for Jamf URL validation, write-only secrets, saved-value behavior,
-  UI controls, profile generation and validation, endpoint safety, credential
-  precedence, staged errors, cancellation, SSH/SFTP cleanup, upload
-  verification, VM-name validation, retry deadlines, and native route parsing.
-- Isolated configuration tests so they cannot accidentally wake the real VM
-  scheduler or start a host VM.
-- Verified with `go test ./...`, `go test -race ./...`, `go vet ./...`, and an
-  arm64 Go 1.24.3 build.
-- Live-tested the automatic scheduler with bridged networking: Tart Oven
-  selected and started a stopped VM, Tart reported it running, and Tart Oven
-  resolved its bridged IP through the native neighbor table.
-
-### Operational boundaries
-
-- Tart Oven copies the profile but does not install it inside the guest.
-- The intended base remains unenrolled: copy the profile to its Desktop, stop
-  it, and clone it so each new VM receives the file without inheriting an
-  already-enrolled device identity.
-- Tart Oven does not stop the prepared base VM or automatically create clones
-  after the copy. Those remain explicit operator actions.
-- The guest must be running, reachable over bridged networking, and have Remote
-  Login enabled before profile transfer.
-- SSH host keys are not persisted or pinned because the target machines are
-  ephemeral and may be recreated with new host keys.
+  Tart Oven now owns the boot deadline itself, reads the host's routing table
+  directly, and matches the VM's MAC address against it. It keeps retrying until an
+  address appears or your configured boot timeout expires.
+- **VM names used for file lookups** are restricted to a single safe path component,
+  with `..` explicitly rejected.
