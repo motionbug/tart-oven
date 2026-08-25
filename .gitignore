@@ -39,4 +39,5 @@ settings.local.json
 # Agent & worktree directories
 .agents/
 .worktrees/
+node_modules/
 
