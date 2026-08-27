@@ -117,7 +117,7 @@ func TestOCIImagesAreCloneOnlyAndHiddenByRunningFilter(t *testing.T) {
 	}
 	clone := sourceSection(t, html, `function cloneFromOCI`, `function renderOCIImages`)
 	for _, want := range []string{
-		`showTab("vmm")`, `[value="clone"]`, `.checked = true`, `updateCreateMode()`, `cloneSource.value = name`,
+		`showTab("vmm")`, `setCreateMode("clone")`, `cloneSource.value = name`,
 	} {
 		if !strings.Contains(clone, want) {
 			t.Errorf("OCI clone handoff missing %q", want)

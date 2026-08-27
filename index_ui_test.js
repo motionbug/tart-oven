@@ -260,14 +260,12 @@ test("renderOCIImages safely binds a hostile external name without inline JavaSc
 
 test("cloneFromOCI opens clone management with the exact OCI reference", () => {
   const source = { value: "", focusCalled: false, focus() { this.focusCalled = true; } };
-  const cloneRadio = { checked: false };
   let shown = "";
-  let modeUpdates = 0;
+  let modeSet = "";
   const cloneFromOCI = evaluateFunction("cloneFromOCI", {
     showTab: id => { shown = id; },
-    updateCreateMode: () => { modeUpdates++; },
+    setCreateMode: mode => { modeSet = mode; },
     document: {
-      querySelector: () => cloneRadio,
       getElementById: () => source,
     },
   });
@@ -276,8 +274,7 @@ test("cloneFromOCI opens clone management with the exact OCI reference", () => {
   cloneFromOCI(exact);
 
   assert.equal(shown, "vmm");
-  assert.equal(cloneRadio.checked, true);
-  assert.equal(modeUpdates, 1);
+  assert.equal(modeSet, "clone");
   assert.equal(source.value, exact);
   assert.equal(source.focusCalled, true);
 });
@@ -462,7 +459,7 @@ test("renderTasks streams pull progress to pullOciLog when pull modal is open", 
   const document = {
     getElementById: id => elements[id] || null,
   };
-  const renderTasks = evaluateFunction("renderTasks", {
+  const renderTasks = evaluateFunctions(["renderTasks", "updateOciProgress"], "renderTasks", {
     document,
     esc: s => String(s),
     fmtDateTime: () => "just now",
@@ -484,6 +481,43 @@ test("renderTasks streams pull progress to pullOciLog when pull modal is open", 
   assert.equal(elements.pullOciLog.textContent, "Downloading layer 1/5...");
   assert.equal(elements.pullOciSubmit.disabled, true);
   assert.equal(elements.pullOciSubmit.textContent, "Pulling...");
+});
+
+test("renderTasks streams pull progress to the inline Create-VM OCI section when it is visible", () => {
+  const elements = {
+    tasks: { innerHTML: "" },
+    pullOciModal: { classList: { contains(c) { return true; } } },
+    ociField: { style: { display: "" } },
+    pullOciLogContainerInline: { classList: { remove() {} } },
+    pullOciLogInline: { textContent: "", scrollHeight: 100, scrollTop: 0, clientHeight: 100 },
+    createBtn: { disabled: false, textContent: "Pull Image" },
+    ociImageInputInline: { value: "ghcr.io/cirruslabs/macos-sequoia-base:latest" },
+  };
+  const document = {
+    getElementById: id => elements[id] || null,
+  };
+  const renderTasks = evaluateFunctions(["renderTasks", "updateOciProgress"], "renderTasks", {
+    document,
+    esc: s => String(s),
+    fmtDateTime: () => "just now",
+    cancelTask: () => {},
+  });
+
+  const tasks = [
+    {
+      id: "pull-2",
+      kind: "pull",
+      target: "ghcr.io/cirruslabs/macos-sequoia-base:latest",
+      status: "running",
+      output: "Downloading layer 2/5...",
+      startedAt: "2026-08-27T12:00:00Z",
+    },
+  ];
+
+  renderTasks(tasks);
+  assert.equal(elements.pullOciLogInline.textContent, "Downloading layer 2/5...");
+  assert.equal(elements.createBtn.disabled, true);
+  assert.equal(elements.createBtn.textContent, "Pulling...");
 });
 
 test("submitOciPull handles text/plain and json error responses gracefully", async () => {

@@ -12,6 +12,51 @@ A few terms appear throughout:
 - **MDM / Jamf Pro** — the system that manages enrolled Macs. Tart Oven can prepare
   a VM for enrollment and report whether a guest is enrolled.
 
+## 1.51 — 2026-08-27
+
+### VM table cleanup
+
+- **Added a green "OK" / red "KO" label** next to the SSH status dot once a
+  guest command has actually been checked, so the result reads clearly
+  without squinting at a small dot. The checking (amber, blinking) and
+  stopped (grey) dots are unchanged.
+- **Removed the separate "SSH"/"agent" pill** next to the status dot in the
+  local VM table. Which transport last answered is still available, now as
+  the dot's tooltip, instead of a permanent badge crowding the row.
+- **Fixed a double-scrollbar glitch in the Info column**: a long unbroken
+  token (e.g. an SSH error like `(publickey,password,keyboard-interactive)`)
+  could overflow the box horizontally instead of wrapping, showing both a
+  horizontal and a vertical scrollbar at once. The box now wraps long tokens
+  and only ever scrolls vertically.
+
+### Create / clone VMs: OCI pull moved inline
+
+- **Pulling a base image is now a third option** next to "Clone from template"
+  and "Create from IPSW" in Create / clone VMs, styled as one three-button
+  group instead of two radio buttons plus a separate, disconnected button.
+- **No more popup for this flow**: picking "Pull OCI Image" shows the preset
+  chips, registry field, and live pull progress directly in the section: the
+  "Pull OCI Image" modal itself is unchanged and still used by the OCI Images
+  panel and the first-run empty-state hero card.
+- Dropped the decorative down-arrow from this button (the OCI Images panel
+  and empty-state hero buttons keep it) and gave the three mode buttons a
+  fixed height, so switching between them no longer shifts the row's size.
+
+### Header
+
+- **No more empty pill when the server label is unset.** The label badge now
+  hides itself entirely instead of showing as a small blank oval next to the
+  host stats.
+
+### Configurable graceful shutdown
+
+- **New toggle in Configuration → SSH & Commands: "Prioritize shutdown using
+  SSH".** Off (default) keeps the fast `tart stop` behavior introduced in 1.50.
+  On, stopping a VM first asks the guest to shut down cleanly over SSH
+  (`sudo shutdown -h now`), waiting up to 30 seconds before falling back to the
+  standard stop — a safer option for guests that need time to flush state on
+  power-off.
+
 ## 1.50 — 2026-08-25
 
 First-time setup is now guided, you can download images without leaving the app, and
