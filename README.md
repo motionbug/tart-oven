@@ -4,7 +4,7 @@ Tart Oven is a local web console for managing [Tart](https://github.com/openai/t
 
 Tart Oven runs on macOS. Its guests can run macOS or Linux.
 
-Current release: **1.50** · [Changelog](CHANGELOG.md)
+Current release: **1.51** · [Changelog](CHANGELOG.md)
 
 ## Prerequisites
 
@@ -24,13 +24,13 @@ Tart Oven limits the host to two running VMs at a time. Apple's macOS license al
 
 ### 1. Install Tart Oven
 
-Download `TartOven-1.50.pkg` from the [release page](https://github.com/motionbug/tart-oven/releases).
+Download `TartOven-1.51.pkg` from the [release page](https://github.com/vbnin/tart-oven/releases).
 
 Open the package in Finder or install it from Terminal:
 
 ```sh
 cd "$HOME/Downloads"
-sudo installer -pkg "./TartOven-1.50.pkg" -target /
+sudo installer -pkg "./TartOven-1.51.pkg" -target /
 ```
 
 The package installs:
@@ -95,14 +95,14 @@ Tart Oven keeps two kinds of entries separate:
 - **OCI Images** are cached registry images used as clone sources.
 - **Local VMs** are runnable, editable copies.
 
-Pull an image once, then create local clones as needed.
+Pull an image once, then create local clones as needed. You can start a pull from **Dashboard → OCI Images**, or directly from **VM Management → Create / clone VMs** by picking **Pull OCI Image** alongside **Clone from template** and **Create from IPSW**.
 
 ### VM actions
 
 The Dashboard provides these common actions:
 
 - **Run** starts a stopped VM.
-- **Stop** asks Tart to stop it with a short timeout and may force termination. For data-sensitive work, shut down the guest normally first.
+- **Stop** asks Tart to stop it with a short timeout and may force termination. Enable **Prioritize shutdown using SSH** in **Configuration → SSH & Commands** to instead ask the guest to shut down cleanly over SSH first (up to 30 seconds) before falling back to the fast stop — safer for guests that need time to flush state on power-off.
 - **Restart** stops and starts the VM.
 - **Get info** runs the configured status command inside the guest.
 - **Screen** opens macOS Screen Sharing when the guest has an IP and Screen Sharing is enabled.
@@ -122,6 +122,8 @@ Under **Dashboard → Guest Commands**:
 4. Click **Run**.
 
 Commands execute with the privileges available inside the guest. Treat this panel like a terminal.
+
+The **Jamf Commands** tab next to **SSH & Shell** offers one-click presets (`sudo jamf policy`, `sudo jamf recon`, `sudo jamf manage`) and a field to run `sudo jamf policy -event <name>` against a running VM, using the same guest-agent-or-SSH transport and sudo password field as SSH & Shell.
 
 ## Configuration
 
@@ -306,7 +308,7 @@ On macOS 15 or later, Tart may require the host user's `login.keychain` to exist
 Building requires Go 1.24.3 or later.
 
 ```sh
-git clone https://github.com/motionbug/tart-oven.git
+git clone https://github.com/vbnin/tart-oven.git
 cd tart-oven
 go build -o tart-oven .
 ./tart-oven -listen 127.0.0.1:9000
@@ -322,6 +324,6 @@ go test ./... && node index_ui_test.js
 
 ## Support and license
 
-Report bugs through the [GitHub issue tracker](https://github.com/motionbug/tart-oven/issues).
+Report bugs through the [GitHub issue tracker](https://github.com/vbnin/tart-oven/issues).
 
 This repository does not currently include a license file. Ask the maintainer for applicable terms before redistributing the software.

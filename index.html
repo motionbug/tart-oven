@@ -138,7 +138,6 @@
   .stat-val { font-size: 15.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
   .mdm-label { font-size: 13px; color: var(--muted); margin-left: 4px; vertical-align: middle; }
   .mdm-url { font-size: 13px; color: var(--muted); font-family: ui-monospace, Menlo, Monaco, monospace; overflow: hidden; text-overflow: ellipsis; max-width: 185px; white-space: nowrap; }
-  .via-tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--grey); margin-left: 6px; vertical-align: middle; background: var(--panel2); padding: 2px 6px; border-radius: 4px; }
   .theme-toggle {
     background: var(--panel2);
     border: 1px solid var(--border);
@@ -363,7 +362,8 @@
   .segmented-control { display: inline-flex; align-items: center; gap: 3px; background: var(--panel2); padding: 3px; border-radius: 6px; border: 1px solid var(--border); }
   .subtab-btn {
     background: transparent; border: 1px solid transparent; color: var(--muted); cursor: pointer;
-    padding: 6px 14px; font: inherit; font-size: 13.5px; font-weight: 500; border-radius: 4px;
+    height: 32px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center;
+    font: inherit; font-size: 13.5px; font-weight: 500; border-radius: 4px;
     transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1); user-select: none;
   }
   .subtab-btn:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
@@ -486,7 +486,7 @@
   td.mdm { min-width: 160px; max-width: 200px; }
   td.notes { max-width: 160px; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   td[data-state="running"] { color: var(--green); font-weight: 600; }
-  .infobox { font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; max-height: 72px; overflow: auto; color: var(--muted); }
+  .infobox { font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; max-height: 72px; overflow-y: auto; overflow-x: hidden; color: var(--muted); }
   .state { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; padding: 3px 9px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--border); }
   .state .dot { width: 8px; height: 8px; border-radius: 50%; }
   .s-running  { color: var(--green); border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08); font-weight: 600; }
@@ -521,6 +521,9 @@
   .ssh-dot.red { background: var(--red); }
   .ssh-dot.amber { background: var(--amber); animation: pulse 1s infinite; }
   .ssh-dot.grey { background: var(--grey); }
+  .ssh-status-label { font-size: 11px; font-weight: 700; letter-spacing: .03em; margin-left: 6px; vertical-align: middle; }
+  .ssh-status-label.ok { color: var(--green); }
+  .ssh-status-label.bad { color: var(--red); }
 
   .ssh-row { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
   .ssh-row select { width: 280px; flex: none; }
@@ -771,13 +774,13 @@
     <div class="panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <h2 style="margin:0">Create / clone VMs</h2>
-        <button class="ghost" onclick="openPullOciModal()">⇩ Pull OCI Image</button>
       </div>
-      <div class="ssh-row" style="margin-bottom:14px">
-        <label class="radio"><input type="radio" name="createMode" value="clone" checked onchange="updateCreateMode()"> Clone from template</label>
-        <label class="radio"><input type="radio" name="createMode" value="ipsw" onchange="updateCreateMode()"> Create from IPSW</label>
+      <div class="segmented-control" style="margin-bottom:14px">
+        <button type="button" class="subtab-btn active" id="createModeCloneBtn" onclick="setCreateMode('clone')">Clone from template</button>
+        <button type="button" class="subtab-btn" id="createModeIpswBtn" onclick="setCreateMode('ipsw')">Create from IPSW</button>
+        <button type="button" class="subtab-btn" id="createModeOciBtn" onclick="setCreateMode('oci')">Pull OCI Image</button>
       </div>
-      <div class="grid">
+      <div class="grid" id="createFieldsGrid">
         <div class="field" id="cloneSourceField"><label>Source VM / template</label><select id="cloneSource"></select></div>
         <div class="field" id="ipswField" style="display:none"><label>IPSW path or "latest"</label><input type="text" id="fromIpsw" value="latest"><small>Local .ipsw path or "latest"</small></div>
         <div class="field" id="linuxField" style="display:none"><label>&nbsp;</label><label class="radio"><input type="checkbox" id="createLinux" onchange="updateCreateMode()"> Linux VM (no IPSW)</label></div>
@@ -788,7 +791,23 @@
         <div class="field"><label>Disk size (GB)</label><input type="number" id="createDisk" min="0" value="80"><small id="diskHint">For IPSW: initial size. For clone: grow only (blank = keep)</small></div>
         <div class="field"><label>Display (WxH)</label><input type="text" id="createDisplay" value="1440x900"></div>
       </div>
-      <div class="checks">
+      <div class="field" id="ociField" style="display:none">
+        <label style="font-size: 13px; font-weight: 600;">Base image</label>
+        <div class="preset-chips" style="display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px;">
+          <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-tahoe-base:latest" onclick="selectOciPreset(this, 'ociImageInputInline')" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 26 (Tahoe)</button>
+          <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-sequoia-base:latest" onclick="selectOciPreset(this, 'ociImageInputInline')" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 15 (Sequoia)</button>
+          <button type="button" class="ghost oci-chip" data-oci-preset="ghcr.io/cirruslabs/macos-sonoma-base:latest" onclick="selectOciPreset(this, 'ociImageInputInline')" style="font-size: 12.5px; padding: 6px 12px;">🍏 macOS 14 (Sonoma)</button>
+        </div>
+        <input type="text" id="ociImageInputInline" class="mono" placeholder="ghcr.io/cirruslabs/macos-sequoia-base:latest">
+        <label class="radio" style="display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px;">
+          <input type="checkbox" id="ociInsecureChkInline"> Allow untrusted / HTTP registry (--insecure)
+        </label>
+        <div id="pullOciLogContainerInline" class="hidden" style="margin-top: 12px;">
+          <div style="font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--muted);">Pull Progress Output:</div>
+          <pre id="pullOciLogInline" class="mono" style="background: var(--code-bg); padding: 10px; border-radius: 6px; max-height: 160px; overflow-y: auto; font-size: 12px; border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; margin: 0;"></pre>
+        </div>
+      </div>
+      <div class="checks" id="createChecks">
         <label><input type="checkbox" id="createRandMac" checked> Random MAC</label>
         <label><input type="checkbox" id="createRandSerial" checked> Random serial</label>
       </div>
@@ -968,6 +987,7 @@
         <div class="field"><label>SSH connect timeout (s)</label><input type="number" id="sshTimeoutSec" min="1"></div>
         <div class="field"><label>Status command (Get info)</label><input type="text" id="statusCommand"></div>
         <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="sshFallbackEnabled"><span class="slider"></span></span> Allow SSH fallback for guest commands</label><small>Off = agent only. Hides the SSH setup guide and identity file.</small></div>
+        <div class="field"><label>&nbsp;</label><label class="radio"><span class="toggle"><input type="checkbox" id="prioritizeSshShutdown"><span class="slider"></span></span> Prioritize shutdown using SSH</label><small>On = try a clean SSH shutdown first (up to 30s) before falling back to the fast stop. Off = fast stop only.</small></div>
       </div>
     </div>
 
@@ -1690,6 +1710,7 @@ function fillConfig(c) {
   set("logPath", c.logPath || "");
   chk("showRunningOnly", c.showRunningOnly);
   chk("sshFallbackEnabled", c.sshFallbackEnabled !== false);
+  chk("prioritizeSshShutdown", c.prioritizeSshShutdown);
   renderJamfProfiles();
   configLoaded = true;
 }
@@ -1717,6 +1738,7 @@ function readConfig() {
     paused: latest ? latest.config.paused : false,
     sshUser: str("sshUser"), sshPassword: str("sshPassword"), sshKey: str("sshKey"), sshTimeoutSec: num("sshTimeoutSec"),
     sshFallbackEnabled: chk("sshFallbackEnabled"),
+    prioritizeSshShutdown: chk("prioritizeSshShutdown"),
     statusCommand: str("statusCommand"), runArgs: str("runArgs"), bootTimeoutSec: num("bootTimeoutSec"), netPriority: str("netPriority"),
     serverLabel: str("serverLabel"), logPath: str("logPath")
   };
@@ -1987,13 +2009,12 @@ function sshCell(vm) {
     const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
     if (checked) {
       // Commands reach the guest either through the Tart guest agent (no SSH at
-      // all) or through the SSH fallback; show which one answered.
-      const via = vm.agentOk
-        ? '<span class="via-tag" title="commands run through the Tart guest agent">agent</span>'
-        : '<span class="via-tag" title="commands run over SSH">ssh</span>';
+      // all) or through the SSH fallback; fold which one answered into the
+      // dot's tooltip rather than a separate visible badge, to keep the row compact.
+      const via = vm.agentOk ? "the Tart guest agent" : "SSH";
       return vm.sshOk
-        ? '<span class="ssh-dot green" title="guest command OK"></span>' + via
-        : '<span class="ssh-dot red" title="guest command failed — if this VM has no Tart guest agent, see the SSH setup guide in VM Management"></span>';
+        ? '<span class="ssh-dot green" title="guest command OK via ' + via + '"></span><span class="ssh-status-label ok" title="guest command OK via ' + via + '">OK</span>'
+        : '<span class="ssh-dot red" title="guest command failed via ' + via + ' — if this VM has no Tart guest agent, see the SSH setup guide in VM Management"></span><span class="ssh-status-label bad" title="guest command failed via ' + via + '">KO</span>';
     }
     return '<span class="ssh-dot amber" title="checking SSH…"></span>';
   }
@@ -2188,7 +2209,9 @@ function render(state) {
 
   // Update server label in header and page title
   const label = state.config.serverLabel || "";
-  document.getElementById("serverLabelDisplay").textContent = label;
+  const serverLabelDisplay = document.getElementById("serverLabelDisplay");
+  serverLabelDisplay.textContent = label;
+  serverLabelDisplay.style.display = label ? "" : "none";
   document.title = label ? label + " — Tart Oven" : "Tart Oven";
 
   renderTable(state.vms);
@@ -2220,8 +2243,7 @@ function isOCI(source) {
 
 function cloneFromOCI(name) {
   showTab("vmm");
-  document.querySelector('input[name="createMode"][value="clone"]').checked = true;
-  updateCreateMode();
+  setCreateMode("clone");
   const cloneSource = document.getElementById("cloneSource");
   cloneSource.value = name;
   cloneSource.focus();
@@ -2423,25 +2445,30 @@ function closePullOciModal() {
   if (modal) modal.classList.add("hidden");
 }
 
-function selectOciPreset(btn) {
+function selectOciPreset(btn, inputId) {
   const preset = btn && btn.dataset && btn.dataset.ociPreset;
-  const input = document.getElementById("ociImageInput");
+  const input = document.getElementById(inputId || "ociImageInput");
   if (input && preset) {
     input.value = preset;
     input.focus();
   }
 }
 
-async function submitOciPull() {
-  const input = document.getElementById("ociImageInput");
+async function submitOciPull(opts) {
+  opts = opts || {};
+  const imageInputId = opts.imageInputId || "ociImageInput";
+  const insecureChkId = opts.insecureChkId || "ociInsecureChk";
+  const submitBtnId = opts.submitBtnId || "pullOciSubmit";
+  const logContainerId = opts.logContainerId || "pullOciLogContainer";
+  const input = document.getElementById(imageInputId);
   const image = (input ? input.value : "").trim();
-  const chk = document.getElementById("ociInsecureChk");
+  const chk = document.getElementById(insecureChkId);
   const insecure = chk ? chk.checked : false;
   if (!image) {
     toast("OCI Pull", "Please enter an OCI image reference or pick a preset.", "bad");
     return;
   }
-  const submitBtn = document.getElementById("pullOciSubmit");
+  const submitBtn = document.getElementById(submitBtnId);
   if (submitBtn) {
     submitBtn.disabled = true;
     submitBtn.textContent = "Starting Pull...";
@@ -2466,7 +2493,7 @@ async function submitOciPull() {
       throw new Error(errText || "Failed to start OCI pull");
     }
     toast("OCI Pull", "Pull task started for " + image, "good");
-    const logContainer = document.getElementById("pullOciLogContainer");
+    const logContainer = document.getElementById(logContainerId);
     if (logContainer) logContainer.classList.remove("hidden");
     if (submitBtn) submitBtn.textContent = "Pulling...";
   } catch (err) {
@@ -2860,17 +2887,39 @@ async function copyMdmProfile() {
 }
 el("copyMdmBtn").onclick = copyMdmProfile;
 
+let createMode = "clone";
+function setCreateMode(mode) {
+  createMode = mode;
+  document.getElementById("createModeCloneBtn").classList.toggle("active", mode === "clone");
+  document.getElementById("createModeIpswBtn").classList.toggle("active", mode === "ipsw");
+  document.getElementById("createModeOciBtn").classList.toggle("active", mode === "oci");
+  updateCreateMode();
+}
+
 function updateCreateMode() {
-  const mode = document.querySelector('input[name="createMode"]:checked').value;
-  const clone = mode === "clone";
+  const clone = createMode === "clone";
+  const oci = createMode === "oci";
   const linux = document.getElementById("createLinux").checked;
   document.getElementById("cloneSourceField").style.display = clone ? "" : "none";
   document.getElementById("ipswField").style.display = (!clone && !linux) ? "" : "none";
   document.getElementById("linuxField").style.display = clone ? "none" : "";
+  document.getElementById("createFieldsGrid").style.display = oci ? "none" : "";
+  document.getElementById("createChecks").style.display = oci ? "none" : "";
+  document.getElementById("ociField").style.display = oci ? "" : "none";
+  document.getElementById("createBtn").textContent = oci ? "Pull Image" : "Create VMs";
 }
 
 el("createBtn").onclick = async () => {
-  const mode = document.querySelector('input[name="createMode"]:checked').value;
+  const mode = createMode;
+  if (mode === "oci") {
+    await submitOciPull({
+      imageInputId: "ociImageInputInline",
+      insecureChkId: "ociInsecureChkInline",
+      submitBtnId: "createBtn",
+      logContainerId: "pullOciLogContainerInline"
+    });
+    return;
+  }
   const num = id => parseInt(document.getElementById(id).value, 10) || 0;
   const str = id => document.getElementById(id).value.trim();
   const body = {
@@ -3015,34 +3064,49 @@ function renderTasks(tasks) {
     }
   }
 
-  const pullLog = document.getElementById("pullOciLog");
-  const pullLogContainer = document.getElementById("pullOciLogContainer");
   const modal = document.getElementById("pullOciModal");
-  if (pullLog && modal && !modal.classList.contains("hidden") && Array.isArray(tasks)) {
-    const inputEl = document.getElementById("ociImageInput");
-    const currentImg = (inputEl && inputEl.value ? inputEl.value : "").trim();
-    const pullTask = tasks.slice().reverse().find(t => t.kind === "pull" && (!currentImg || t.target === currentImg)) ||
-                     tasks.slice().reverse().find(t => t.kind === "pull");
-    if (pullTask) {
-      if (pullLogContainer) pullLogContainer.classList.remove("hidden");
-      const atBottom = pullLog.scrollHeight - pullLog.scrollTop - pullLog.clientHeight < 30;
-      let text = pullTask.output || "";
-      if (pullTask.status !== "running" && pullTask.error && !text.includes(pullTask.error)) {
-        text += (text ? "\n" : "") + "Error: " + pullTask.error;
-      }
-      pullLog.textContent = text;
-      if (atBottom) pullLog.scrollTop = pullLog.scrollHeight;
+  updateOciProgress(tasks, {
+    logId: "pullOciLog", logContainerId: "pullOciLogContainer",
+    imageInputId: "ociImageInput", submitBtnId: "pullOciSubmit"
+  }, modal && !modal.classList.contains("hidden"));
 
-      const submitBtn = document.getElementById("pullOciSubmit");
-      if (submitBtn) {
-        if (pullTask.status === "running") {
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Pulling...";
-        } else {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "Pull Image";
-        }
-      }
+  const ociField = document.getElementById("ociField");
+  updateOciProgress(tasks, {
+    logId: "pullOciLogInline", logContainerId: "pullOciLogContainerInline",
+    imageInputId: "ociImageInputInline", submitBtnId: "createBtn"
+  }, ociField && ociField.style.display !== "none");
+}
+
+// Drives a Pull-OCI progress display (log + submit button) from the live task
+// list — shared by the modal (used by the OCI Images panel and the empty-state
+// hero) and the inline section in Create / clone VMs, which use distinct
+// element ids so both can coexist.
+function updateOciProgress(tasks, ids, isVisible) {
+  const pullLog = document.getElementById(ids.logId);
+  if (!pullLog || !isVisible || !Array.isArray(tasks)) return;
+  const inputEl = document.getElementById(ids.imageInputId);
+  const currentImg = (inputEl && inputEl.value ? inputEl.value : "").trim();
+  const pullTask = tasks.slice().reverse().find(t => t.kind === "pull" && (!currentImg || t.target === currentImg)) ||
+                   tasks.slice().reverse().find(t => t.kind === "pull");
+  if (!pullTask) return;
+  const pullLogContainer = document.getElementById(ids.logContainerId);
+  if (pullLogContainer) pullLogContainer.classList.remove("hidden");
+  const atBottom = pullLog.scrollHeight - pullLog.scrollTop - pullLog.clientHeight < 30;
+  let text = pullTask.output || "";
+  if (pullTask.status !== "running" && pullTask.error && !text.includes(pullTask.error)) {
+    text += (text ? "\n" : "") + "Error: " + pullTask.error;
+  }
+  pullLog.textContent = text;
+  if (atBottom) pullLog.scrollTop = pullLog.scrollHeight;
+
+  const submitBtn = document.getElementById(ids.submitBtnId);
+  if (submitBtn) {
+    if (pullTask.status === "running") {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Pulling...";
+    } else {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Pull Image";
     }
   }
 }

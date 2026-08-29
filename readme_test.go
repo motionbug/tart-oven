@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestReadmeContainsOnboardingAndSafetyEssentials(t *testing.T) {
 		"## Security",
 		"## Troubleshooting",
 		"## Build from source",
-		"TartOven-1.50.pkg",
+		fmt.Sprintf("TartOven-%s.pkg", version),
 		"/Library/LaunchAgents/com.tartoven.agent.plist",
 		"http://127.0.0.1:9000",
 		"At least 25 GiB free",

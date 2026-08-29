@@ -3,11 +3,14 @@
 #
 #   ./packaging/build-pkg.sh
 #
-# The script will prompt whether to sign/notarize. If yes, it will ask for:
-#   - Your full name (as shown in your Developer ID certificates)
-#   - Your Apple Team ID
-#   - Your Apple ID email
-#   - An app-specific password for notarization
+# Signing is auto-detected from Developer ID certs in Keychain, or forced with
+# SIGN_PKG=true / APP_SIGN_IDENTITY+PKG_SIGN_IDENTITY. Whenever signing ends up
+# enabled — by any of those paths — notarization is asked about (or read from
+# env vars TEAM_ID, APPLE_EMAIL, APP_PASSWORD; set NOTARIZE=true to force it
+# non-interactively once those three are set). Interactively, you'll be asked:
+#   - Whether to sign (skipped if certs are auto-detected or SIGN_PKG is set)
+#   - Whether to notarize, then for any of Team ID / Apple ID email /
+#     app-specific password not already supplied via env var
 #
 # The resulting TartOven-<version>.pkg installs:
 #   /Library/Application Support/Tart Oven/tart-oven   (the binary)
@@ -68,16 +71,6 @@ elif [ -t 0 ]; then
             PKG_SIGN_IDENTITY="Developer ID Installer: $DEV_NAME ($TEAM_ID)"
             DO_SIGN=true
         fi
-        
-        read -p "Do you also want to submit for Apple Notarization? [y/N] " NOTARIZE_ANSWER
-        NOTARIZE_ANSWER=${NOTARIZE_ANSWER:-n}
-        if [[ "$NOTARIZE_ANSWER" =~ ^[Yy]$ ]]; then
-            read -p "  Team ID: " TEAM_ID
-            read -p "  Apple ID email: " APPLE_EMAIL
-            read -s -p "  App-specific password: " APP_PASSWORD
-            echo ""
-            DO_NOTARIZE=true
-        fi
     fi
 fi
 
@@ -85,6 +78,41 @@ if [ "$DO_SIGN" = true ]; then
     echo "==> Signing enabled:"
     echo "    App binary: $APP_SIGN_IDENTITY"
     echo "    Installer:  $PKG_SIGN_IDENTITY"
+fi
+
+# Notarization credentials: same env-var-first, prompt-only-for-missing-fields
+# pattern as signing above, resolved independently of *how* signing was
+# enabled (env var, an auto-detected Keychain identity, or the prompt above).
+# Auto-detection alone used to short-circuit past the old notarization prompt
+# entirely on any Mac that already had Developer ID certs installed, since
+# that prompt only lived inside the interactive-signing branch above.
+if [ "$DO_SIGN" = true ]; then
+    TEAM_ID="${TEAM_ID:-}"
+    APPLE_EMAIL="${APPLE_EMAIL:-}"
+    APP_PASSWORD="${APP_PASSWORD:-}"
+
+    if [ -n "${NOTARIZE:-}" ] && [ "$NOTARIZE" = "true" ]; then
+        DO_NOTARIZE=true
+    elif [ -n "$TEAM_ID" ] && [ -n "$APPLE_EMAIL" ] && [ -n "$APP_PASSWORD" ]; then
+        DO_NOTARIZE=true
+    elif [ -t 0 ]; then
+        echo ""
+        read -p "Do you also want to submit for Apple Notarization? [y/N] " NOTARIZE_ANSWER
+        NOTARIZE_ANSWER=${NOTARIZE_ANSWER:-n}
+        if [[ "$NOTARIZE_ANSWER" =~ ^[Yy]$ ]]; then
+            [ -z "$TEAM_ID" ] && read -p "  Team ID: " TEAM_ID
+            [ -z "$APPLE_EMAIL" ] && read -p "  Apple ID email: " APPLE_EMAIL
+            if [ -z "$APP_PASSWORD" ]; then
+                read -s -p "  App-specific password: " APP_PASSWORD
+                echo ""
+            fi
+            DO_NOTARIZE=true
+        fi
+    fi
+
+    if [ "$DO_NOTARIZE" = true ]; then
+        echo "==> Notarization enabled (Team ID: $TEAM_ID, Apple ID: $APPLE_EMAIL)"
+    fi
 fi
 
 echo ""

@@ -41,7 +41,7 @@ import (
 //go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.50"
+const version = "1.51"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -260,20 +260,21 @@ type Config struct {
 	JamfBaseURL             string        `json:"jamfBaseUrl,omitempty"`
 	JamfInvitationCode      string        `json:"jamfInvitationCode,omitempty"`
 	SSHUser                 string        `json:"sshUser"`
-	SSHPassword             string        `json:"sshPassword"`        // guest SSH/sudo password; write-only
-	SSHKey                  string        `json:"sshKey"`             // identity file for the SSH fallback
-	SSHFallbackEnabled      bool          `json:"sshFallbackEnabled"` // allow SSH when a guest has no Tart guest agent
-	SSHTimeoutSec           int           `json:"sshTimeoutSec"`      // ssh connect timeout
-	StatusCommand           string        `json:"statusCommand"`      // command for "Get info"
-	RunArgs                 string        `json:"runArgs"`            // extra args appended to every `tart run`
-	NetPriority             string        `json:"netPriority"`        // "auto" | "wifi" | "ethernet"
-	BootTimeoutSec          int           `json:"bootTimeoutSec"`     // wait for IP before declaring boot failure
-	HistoryDays             int           `json:"historyDays"`        // run-history retention in days
-	LogPath                 string        `json:"logPath"`            // path to log file (rotation at 5MB)
-	ServerLabel             string        `json:"serverLabel"`        // custom label to identify this server instance
-	ShowRunningOnly         bool          `json:"showRunningOnly"`    // dashboard filter: show only running VMs
-	FirstRunCompleted       bool          `json:"firstRunCompleted"`  // whether initial setup wizard has completed
-	OperatorRole            string        `json:"operatorRole"`       // operator persona preset (e.g. "jamf", "general")
+	SSHPassword             string        `json:"sshPassword"`           // guest SSH/sudo password; write-only
+	SSHKey                  string        `json:"sshKey"`                // identity file for the SSH fallback
+	SSHFallbackEnabled      bool          `json:"sshFallbackEnabled"`    // allow SSH when a guest has no Tart guest agent
+	PrioritizeSSHShutdown   bool          `json:"prioritizeSshShutdown"` // try a clean SSH shutdown before the fast tart stop
+	SSHTimeoutSec           int           `json:"sshTimeoutSec"`         // ssh connect timeout
+	StatusCommand           string        `json:"statusCommand"`         // command for "Get info"
+	RunArgs                 string        `json:"runArgs"`               // extra args appended to every `tart run`
+	NetPriority             string        `json:"netPriority"`           // "auto" | "wifi" | "ethernet"
+	BootTimeoutSec          int           `json:"bootTimeoutSec"`        // wait for IP before declaring boot failure
+	HistoryDays             int           `json:"historyDays"`           // run-history retention in days
+	LogPath                 string        `json:"logPath"`               // path to log file (rotation at 5MB)
+	ServerLabel             string        `json:"serverLabel"`           // custom label to identify this server instance
+	ShowRunningOnly         bool          `json:"showRunningOnly"`       // dashboard filter: show only running VMs
+	FirstRunCompleted       bool          `json:"firstRunCompleted"`     // whether initial setup wizard has completed
+	OperatorRole            string        `json:"operatorRole"`          // operator persona preset (e.g. "jamf", "general")
 }
 
 type configView struct {
@@ -1522,6 +1523,15 @@ func (m *Manager) doRun(name, trigger string) {
 	m.broadcast()
 }
 
+// sshPriorityShutdownCommand is the guest command run when "Prioritize shutdown
+// using SSH" is enabled — a clean macOS shutdown request, tried before the fast
+// tart stop.
+const sshPriorityShutdownCommand = "sudo shutdown -h now"
+
+// sshPriorityShutdownWait bounds how long a prioritized SSH shutdown gets before
+// falling back to the standard tart stop.
+const sshPriorityShutdownWait = 30 * time.Second
+
 func (m *Manager) doStop(name string) {
 	m.mu.Lock()
 	if m.busy[name] {
@@ -1537,34 +1547,67 @@ func (m *Manager) doStop(name string) {
 	vm.State = "stopping"
 	home := m.cfg.VMStoragePath
 	jamf := m.cfg.JamfRecon
+	prioritizeSSH := m.cfg.PrioritizeSSHShutdown
+	ip := vm.IP
+	sudoPassword := vm.SSHPassword
+	if sudoPassword == "" {
+		sudoPassword = m.cfg.SSHPassword
+	}
 	m.mu.Unlock()
 	m.broadcast()
 
-	m.logln("$ tart stop %s -t 5", name)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	out, err := m.tartCmdCtx(ctx, home, "stop", name, "-t", "5").CombinedOutput()
-	cancel()
-	if err != nil {
-		m.logln("tart stop %s → %v%s", name, err, prefixIfNotEmpty(" ", strings.TrimSpace(string(out))))
-	}
-
 	stopped := false
-	for i := 0; i < 6; i++ {
-		time.Sleep(500 * time.Millisecond)
-		if !m.isRunning(name) {
-			stopped = true
-			break
+
+	// Preferred, when enabled: ask the guest to shut down cleanly over SSH,
+	// bounded to sshPriorityShutdownWait. The connection usually drops as the
+	// guest powers off, so the command's own result is ignored — what matters
+	// is whether the VM actually stops within the deadline.
+	if prioritizeSSH && ip != "" {
+		deadline := time.Now().Add(sshPriorityShutdownWait)
+		m.logln("$ ssh %s %q", name, sshPriorityShutdownCommand)
+		sshCtx, cancel := context.WithDeadline(context.Background(), deadline)
+		m.sshExecContext(sshCtx, name, sshPriorityShutdownCommand, sudoPassword)
+		cancel()
+		for time.Now().Before(deadline) {
+			if !m.isRunning(name) {
+				stopped = true
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+		if stopped {
+			m.logln("%s shut down cleanly via SSH", name)
+		} else {
+			m.logln("%s did not stop via SSH within %s; falling back to tart stop", name, sshPriorityShutdownWait)
 		}
 	}
+
 	if !stopped {
-		m.logln("%s still running; forcing process termination", name)
-		m.mu.Lock()
-		cmd := m.runningCmds[name]
-		m.mu.Unlock()
-		if cmd != nil && cmd.Process != nil {
-			cmd.Process.Kill()
-		} else {
-			m.tartCmd(home, "stop", name, "-t", "1").Run()
+		m.logln("$ tart stop %s -t 5", name)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		out, err := m.tartCmdCtx(ctx, home, "stop", name, "-t", "5").CombinedOutput()
+		cancel()
+		if err != nil {
+			m.logln("tart stop %s → %v%s", name, err, prefixIfNotEmpty(" ", strings.TrimSpace(string(out))))
+		}
+
+		for i := 0; i < 6; i++ {
+			time.Sleep(500 * time.Millisecond)
+			if !m.isRunning(name) {
+				stopped = true
+				break
+			}
+		}
+		if !stopped {
+			m.logln("%s still running; forcing process termination", name)
+			m.mu.Lock()
+			cmd := m.runningCmds[name]
+			m.mu.Unlock()
+			if cmd != nil && cmd.Process != nil {
+				cmd.Process.Kill()
+			} else {
+				m.tartCmd(home, "stop", name, "-t", "1").Run()
+			}
 		}
 	}
 
@@ -3256,6 +3299,12 @@ func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var v bool
 		if json.Unmarshal(raw, &v) == nil {
 			m.cfg.SSHFallbackEnabled = v
+		}
+	}
+	if raw, ok := fields["prioritizeSshShutdown"]; ok {
+		var v bool
+		if json.Unmarshal(raw, &v) == nil {
+			m.cfg.PrioritizeSSHShutdown = v
 		}
 	}
 	if raw, ok := fields["sshKey"]; ok {
