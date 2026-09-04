@@ -4,7 +4,7 @@ Tart Oven is a local web console for managing [Tart](https://github.com/openai/t
 
 Tart Oven runs on macOS. Its guests can run macOS or Linux.
 
-Current release: **1.51** · [Changelog](CHANGELOG.md)
+Current release: **1.52** · [Changelog](CHANGELOG.md)
 
 ## Prerequisites
 
@@ -24,13 +24,13 @@ Tart Oven limits the host to two running VMs at a time. Apple's macOS license al
 
 ### 1. Install Tart Oven
 
-Download `TartOven-1.51.pkg` from the [release page](https://github.com/vbnin/tart-oven/releases).
+Download `TartOven-1.52.pkg` from the [release page](https://github.com/vbnin/tart-oven/releases).
 
 Open the package in Finder or install it from Terminal:
 
 ```sh
 cd "$HOME/Downloads"
-sudo installer -pkg "./TartOven-1.51.pkg" -target /
+sudo installer -pkg "./TartOven-1.52.pkg" -target /
 ```
 
 The package installs:
@@ -99,14 +99,17 @@ Pull an image once, then create local clones as needed. You can start a pull fro
 
 ### VM actions
 
-The Dashboard provides these common actions:
+The Dashboard provides **Run** and **Stop** next to each VM, plus a "⋯" menu with the rest:
 
 - **Run** starts a stopped VM.
 - **Stop** asks Tart to stop it with a short timeout and may force termination. Enable **Prioritize shutdown using SSH** in **Configuration → SSH & Commands** to instead ask the guest to shut down cleanly over SSH first (up to 30 seconds) before falling back to the fast stop — safer for guests that need time to flush state on power-off.
-- **Restart** stops and starts the VM.
-- **Get info** runs the configured status command inside the guest.
-- **Screen** opens macOS Screen Sharing when the guest has an IP and Screen Sharing is enabled.
-- **Install agent** adds the Tart guest agent to a compatible guest that currently requires SSH fallback.
+- **Get info** (⋯ menu) runs the configured status command inside the guest.
+- **Install Agent** (⋯ menu) adds the Tart guest agent to a compatible guest that currently requires SSH fallback.
+- **Start Screen Sharing** (⋯ menu) opens macOS Screen Sharing when the guest has an IP and Screen Sharing is enabled.
+- **Edit Tags** (⋯ menu) opens the notes/tags editor for that VM.
+- **Edit VM** (⋯ menu) jumps to **VM Management → Edit a VM** with that VM preselected.
+- **Auto Enroll VM** (⋯ menu, experimental) — see [Auto-enrolling VMs at boot](#auto-enrolling-vms-at-boot-experimental) below.
+- **Delete VM** (⋯ menu) permanently deletes that VM, after a confirmation prompt.
 
 Official `ghcr.io/cirruslabs/macos-*-base` images include the Tart guest agent. Guest commands can then use `tart exec` without SSH credentials or guest networking.
 
@@ -168,7 +171,7 @@ A safe template workflow is:
 2. Click **Add Jamf Server** and enter the server name, Jamf Pro base URL, and invitation ID.
 3. Start the base VM.
 4. Select the running VM and Jamf server profile.
-5. Enter the guest SSH credentials and click **Copy profile to Desktop**.
+5. Click **Copy profile to Desktop** — it uses that VM's own SSH username/password if set, otherwise the defaults from Configuration.
 6. Confirm `~/Desktop/mdm_enroll.mobileconfig` exists in the guest.
 7. Stop the base VM without enrolling it.
 8. Clone it with **Random MAC** and **Random serial** enabled.
@@ -181,6 +184,35 @@ The **MDM** column is updated when Tart Oven probes a guest:
 - Green shows an enrolled server.
 
 Jamf invitation values and guest SSH passwords are stored locally in `~/.tart-oven/state.json`. The file is owner-only, but the values are not encrypted.
+
+## Auto-enrolling VMs at boot (experimental)
+
+Copying the profile by hand still works, but Tart Oven can also drive System Settings itself — clicking through Install and Enroll over SSH — so a batch of freshly-cloned VMs can enroll themselves with no further intervention.
+
+### Priming a base VM
+
+The automation drives the guest's UI through AppleScript over SSH, which needs two one-time permissions a base VM's disk doesn't have by default. **VM Management → Prepare base VM for Jamf → Enable Auto-Enrollment Capabilities on Base VM** sets them up:
+
+1. Enable autologin on the base VM yourself first (**System Settings → Users & Groups → Login Options**). FileVault must be off for that option to be available.
+2. Start the base VM and keep Screen Sharing open to it.
+3. Select it under **Target Running VM** and click **Run script**.
+4. Click **Allow** on the Automation prompt it triggers, and enable "sshd-keygen-wrapper" in the Accessibility settings it opens for you.
+5. Watch for the confirmation dialog on the VM's own screen, or the banner in Tart Oven, once both grants are confirmed.
+
+Use **Check compatibility** at any time to see a VM's current Autologin, Accessibility, and enrollment-profile status. A check reports Unknown rather than guessing when it can't complete — that is not the same as "not compatible."
+
+These two permissions live on the base VM's disk, so every clone made from it afterward inherits them. It's a one-time step per base VM, not per clone.
+
+### Enrolling automatically
+
+With a primed base VM:
+
+- **Auto enroll at first boot**, in **Clone from template**, flags each clone so its very next boot — scheduler-triggered or manual — runs the enrollment script on its own: push a fresh profile, click through Install and Enroll, then refresh the MDM column.
+- **Auto Enroll VM**, in a VM's **⋯** menu on the dashboard, does the same on demand for one VM: it starts the VM first if it's stopped, or reuses it if it's already running.
+
+Both handle the full first-boot Setup Assistant walkthrough automatically when it appears: `--random-serial` gives a clone a hardware identity macOS has never seen, so it re-runs the entire OOBE (network, Apple Account, FileVault) on its very first boot. The script recognizes and clicks through that before ever touching the enrollment profile. macOS 27 does not have this behavior, so a clone lands straight on the desktop and the script skips this step entirely.
+
+This feature is experimental: it drives the same System Settings UI a person would, so a macOS point release that changes that UI's wording or layout can require an update.
 
 ## Automation
 

@@ -419,6 +419,7 @@
   }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 18px; }
+  .grid.grid-compact { grid-template-columns: repeat(auto-fit, minmax(200px, 280px)); }
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field label { font-size: 14px; font-weight: 500; color: var(--text); }
   .field small { font-size: 13px; color: var(--muted); line-height: 1.4; }
@@ -508,10 +509,30 @@
   .pill { font-size: 13px; font-weight: 500; padding: 3px 11px; border-radius: 9999px; border: 1px solid var(--border); color: var(--muted); }
   .pill.scheduler { color: var(--accent); background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.25); }
   .pill.manual { color: var(--amber); background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.25); }
+  .readiness-pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 3px 9px; border-radius: 5px; margin: 0 5px 5px 0; border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
+  .readiness-pill.readiness-ok { color: var(--green); border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08); }
+  .readiness-pill.readiness-bad { color: var(--red); border-color: rgba(244, 63, 94, 0.35); background: rgba(244, 63, 94, 0.08); }
   .row-actions { display: flex; gap: 4px; flex-wrap: nowrap; justify-content: flex-end; align-items: center; }
   .row-actions button { padding: 4px 10px; font-size: 12.5px; font-weight: 500; border-radius: 5px; height: 28px; white-space: nowrap; }
   .row-actions button.vnc { background: transparent; border: 1px solid rgba(59, 130, 246, 0.4); color: var(--accent); }
   .row-actions button.vnc:hover:not(:disabled) { background: rgba(59, 130, 246, 0.12); border-color: var(--accent); }
+  .row-menu { position: relative; }
+  .row-menu-btn { padding: 4px 9px !important; font-size: 15px !important; line-height: 1; letter-spacing: 1px; }
+  .row-menu-list {
+    display: none; position: fixed; /* fixed, not absolute: JS-positioned so it can flip above
+      the button and is never clipped by the scrollable table wrapper */
+    background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18); z-index: 30; min-width: 165px; overflow: hidden; padding: 4px;
+  }
+  .row-menu.open .row-menu-list { display: flex; flex-direction: column; gap: 1px; }
+  .row-menu-list button {
+    border: none; border-radius: 5px; background: transparent; text-align: left; justify-content: flex-start;
+    padding: 7px 10px; height: auto; box-shadow: none; color: var(--text); width: 100%;
+  }
+  .row-menu-list button:hover:not(:disabled) { background: var(--panel2); }
+  .row-menu-list button:disabled { opacity: .45; }
+  .row-menu-list button.danger { color: var(--red); }
+  .row-menu-list button.danger:hover:not(:disabled) { background: rgba(244, 63, 94, 0.1); }
   .err { color: var(--red); font-size: 13px; }
   .ip { font-family: ui-monospace, Menlo, Monaco, monospace; color: var(--accent); font-size: 13px; }
   .mono { font-family: ui-monospace, Menlo, Monaco, monospace; }
@@ -600,7 +621,6 @@
     <div class="stat"><span class="stat-label">RAM</span><span id="statRam" class="stat-val">—</span></div>
     <div class="stat"><span class="stat-label">Pressure</span><span id="statPressure" class="stat-val">—</span></div>
     <div class="meta" id="hmeta">connecting…</div>
-    <button id="reopenWizardBtn" class="ghost" type="button" onclick="openOnboardingWizard()" title="Launch setup wizard" style="font-size:12px;padding:4px 10px;">🚀 Setup Wizard</button>
     <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false" title="Switch to light mode">🌙</button>
   </div>
 </header>
@@ -810,8 +830,43 @@
       <div class="checks" id="createChecks">
         <label><input type="checkbox" id="createRandMac" checked> Random MAC</label>
         <label><input type="checkbox" id="createRandSerial" checked> Random serial</label>
+        <label id="createAutoEnrollField"><input type="checkbox" id="createAutoEnroll" title="Random serial gives the clone a hardware identity macOS has never seen, so it re-runs Setup Assistant on first boot — the auto-enroll script handles that automatically before installing the MDM profile."> Auto enroll at first boot (experimental, requires compatible base VM)</label>
       </div>
       <div class="actions"><button id="createBtn">Create VMs</button><span class="muted">Progress shows in Activity below.</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Edit a VM</h2>
+      <div class="ssh-row">
+        <select id="editSelect" onchange="loadVMInfo()"></select>
+        <span id="editInfo" class="muted"></span>
+      </div>
+      <div class="grid">
+        <div class="field"><label>CPU cores</label><input type="number" id="editCpu" min="1"></div>
+        <div class="field"><label>Memory (MB)</label><input type="number" id="editMemory" min="512" step="512"></div>
+        <div class="field"><label>Disk size (GB) — grow only</label><input type="number" id="editDisk" min="0" placeholder="blank = unchanged"></div>
+        <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
+        <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
+        <div class="field"><label>Custom SSH user</label><input type="text" id="editSshUser" placeholder="blank = use default"></div>
+        <div class="field"><label>Custom SSH password</label><input type="password" id="editSshPassword" autocomplete="new-password" placeholder="blank = use default / keep current"></div>
+        <div class="field"><label>Tags</label><input type="text" id="editTags" placeholder="comma-separated tags"></div>
+        <div class="field" style="grid-column: span 2"><label>Notes</label><textarea id="editNotes" rows="2" placeholder="Notes about this VM"></textarea></div>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="editRandMac"> New random MAC</label>
+        <label><input type="checkbox" id="editRandSerial"> New random serial</label>
+      </div>
+      <p id="memorySuggestion" class="muted" style="margin:10px 0 0"></p>
+      <div class="actions"><button id="editBtn">Apply changes</button><span class="muted">VM must be stopped.</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Delete a VM</h2>
+      <div class="grid grid-compact">
+        <div class="field"><label>VM to delete</label><select id="deleteSelect"></select></div>
+        <div class="field"><label>&nbsp;</label><button id="deleteBtn" class="danger">Delete permanently</button></div>
+      </div>
+      <p class="muted" style="margin:10px 0 0">VM must be stopped. Delete cannot be undone.</p>
     </div>
 
     <div class="panel">
@@ -856,7 +911,7 @@
       </div>
 
       <h3 style="margin: 18px 0 10px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);">Deploy MDM Enrollment Profile</h3>
-      <div class="grid" style="margin-bottom: 12px;">
+      <div class="grid grid-compact" style="margin-bottom: 12px;">
         <div class="field">
           <label>Target Running VM</label>
           <select id="mdmTarget"></select>
@@ -865,56 +920,31 @@
           <label>Jamf Server Profile</label>
           <select id="mdmProfileSelect"></select>
         </div>
-        <div class="field">
-          <label>SSH Username</label>
-          <input type="text" id="mdmSshUser" placeholder="admin">
-          <small>Defaults to configuration SSH username</small>
-        </div>
-        <div class="field">
-          <label>SSH Password</label>
-          <input type="password" id="mdmSshPassword" placeholder="•••••••• (saved)">
-          <small>Leave blank to use saved password</small>
-        </div>
       </div>
+      <p class="muted" style="margin: 0 0 10px 0; font-size: 12.5px;">Uses this VM's own SSH username/password if set, otherwise the defaults from Configuration.</p>
       <div class="ssh-row" style="margin-top: 10px;">
         <button id="copyMdmBtn">Copy profile to Desktop</button>
         <span class="muted mono">~/Desktop/mdm_enroll.mobileconfig</span>
       </div>
       <div id="mdmCopyStatus" class="muted" style="margin-top: 6px;"></div>
-    </div>
 
-    <div class="panel">
-      <h2>Edit a VM</h2>
-      <div class="ssh-row">
-        <select id="editSelect" onchange="loadVMInfo()"></select>
-        <span id="editInfo" class="muted"></span>
+      <h3 style="margin: 22px 0 10px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);">Enable Auto-Enrollment Capabilities on Base VM</h3>
+      <p class="muted" style="margin: 0 0 10px 0;">Primes a base VM so <b>Auto Enroll VM</b> and <b>Auto enroll at boot</b> actions work on every clone made from it afterward. This script does <b>not</b> enable autologin — set that yourself first (System Settings &gt; Users &amp; Groups &gt; Login Options), and note FileVault must be off on the VM for that option to even be available. Keep Screen Sharing open to the VM while this script runs as it triggers a one-time TCC permission prompt to enable "sshd-keygen-wrapper" in Privacy settings.</p>
+      <div class="grid grid-compact" style="margin-bottom: 12px;">
+        <div class="field">
+          <label>Target Running VM</label>
+          <select id="prepTarget" onchange="checkEnrollReadiness()"></select>
+        </div>
       </div>
-      <div class="grid">
-        <div class="field"><label>CPU cores</label><input type="number" id="editCpu" min="1"></div>
-        <div class="field"><label>Memory (MB)</label><input type="number" id="editMemory" min="512" step="512"></div>
-        <div class="field"><label>Disk size (GB) — grow only</label><input type="number" id="editDisk" min="0" placeholder="blank = unchanged"></div>
-        <div class="field"><label>Display (WxH)</label><input type="text" id="editDisplay"></div>
-        <div class="field"><label>Rename to</label><input type="text" id="renameNew" placeholder="blank = keep name"></div>
-        <div class="field"><label>Custom SSH user</label><input type="text" id="editSshUser" placeholder="blank = use default"></div>
-        <div class="field"><label>Custom SSH password</label><input type="password" id="editSshPassword" autocomplete="new-password" placeholder="blank = use default / keep current"></div>
-        <div class="field"><label>Tags</label><input type="text" id="editTags" placeholder="comma-separated tags"></div>
-        <div class="field" style="grid-column: span 2"><label>Notes</label><textarea id="editNotes" rows="2" placeholder="Notes about this VM"></textarea></div>
+      <div class="field" style="margin-bottom: 12px;">
+        <label>Compatibility</label>
+        <div id="prepReadiness" style="display: flex; flex-wrap: wrap; align-items: center;"><span class="muted">Select a VM to check.</span></div>
       </div>
-      <div class="checks">
-        <label><input type="checkbox" id="editRandMac"> New random MAC</label>
-        <label><input type="checkbox" id="editRandSerial"> New random serial</label>
+      <div class="ssh-row" style="margin-top: 10px;">
+        <button id="prepGoldenBtn">Run script</button>
+        <button class="ghost" id="checkCompatBtn">Check compatibility</button>
       </div>
-      <p id="memorySuggestion" class="muted" style="margin:10px 0 0"></p>
-      <div class="actions"><button id="editBtn">Apply changes</button><span class="muted">VM must be stopped.</span></div>
-    </div>
-
-    <div class="panel">
-      <h2>Delete a VM</h2>
-      <div class="grid">
-        <div class="field"><label>VM to delete</label><select id="deleteSelect"></select></div>
-        <div class="field"><label>&nbsp;</label><button id="deleteBtn" class="danger">Delete permanently</button></div>
-      </div>
-      <p class="muted" style="margin:10px 0 0">VM must be stopped. Delete cannot be undone.</p>
+      <div id="prepGoldenStatus" class="muted" style="margin-top: 6px;"></div>
     </div>
 
     <div class="panel guide" id="sshGuidePanel">
@@ -944,6 +974,14 @@
 
   <!-- ================= TAB 3: CONFIGURATION ================= -->
   <div id="tab-config" class="tab">
+    <div class="panel">
+      <h2>🚀 Setup Wizard</h2>
+      <p class="muted">Re-run the interactive first-run onboarding wizard to check environment status, configure base images, or apply role presets.</p>
+      <div class="actions">
+        <button type="button" class="ghost" onclick="openOnboardingWizard()">🚀 Launch Setup Wizard</button>
+      </div>
+    </div>
+
     <div class="panel">
       <h2>VM Scheduler</h2>
       <div class="grid">
@@ -1004,14 +1042,6 @@
         <button id="srvScreen" class="ghost vnc" title="Open Screen Sharing to the host Mac">🖥 Screen share with host</button>
         <button id="srvRestart" class="ghost" title="Restart the Tart Oven server">⟳ Restart server</button>
         <button id="srvStop" class="danger" title="Stop the Tart Oven server">■ Stop server</button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>🚀 Setup Wizard</h2>
-      <p class="muted">Re-run the interactive first-run onboarding wizard to check environment status, configure base images, or apply role presets.</p>
-      <div class="actions">
-        <button type="button" class="ghost" onclick="openOnboardingWizard()">🚀 Launch Setup Wizard</button>
       </div>
     </div>
 
@@ -1808,14 +1838,6 @@ function renderJamfProfiles() {
     }
   }
 
-  const sshUserEl = document.getElementById("mdmSshUser");
-  if (sshUserEl && !sshUserEl.value && latest && latest.config) {
-    sshUserEl.value = latest.config.sshUser || "admin";
-  }
-  const sshPwEl = document.getElementById("mdmSshPassword");
-  if (sshPwEl && latest && latest.config && latest.config.sshPasswordSet) {
-    sshPwEl.placeholder = "•••••••• (saved)";
-  }
 }
 
 function openAddJamfProfile() {
@@ -2027,10 +2049,13 @@ function infoCell(vm) {
   return '<div class="infobox" title="fetched ' + esc(fmtDateTime(vm.infoAt)) + '">' + esc(vm.info) + '</div>';
 }
 
-// Trims the MDM check-in endpoint down to the console URL an operator would open.
+// Trims the MDM check-in endpoint down to the console URL an operator would
+// open, and drops the scheme (https://) — it's always https, so it's just
+// noise taking up space in the VM table's MDM column.
 function consoleURL(raw) {
   const trimmed = String(raw || "").trim().replace(/\/+$/, "");
-  return trimmed.endsWith("/mdm/ServerURL") ? trimmed.slice(0, -"/mdm/ServerURL".length) : trimmed;
+  const withoutServerPath = trimmed.endsWith("/mdm/ServerURL") ? trimmed.slice(0, -"/mdm/ServerURL".length) : trimmed;
+  return withoutServerPath.replace(/^https?:\/\//, "");
 }
 
 // Enrollment state for a guest. Never probed renders grey rather than red, so a VM
@@ -2117,13 +2142,86 @@ function setHeaderStat(id, text, ratio) {
 // back to "—" on its own so one unavailable source never blanks the others.
 // Shows or hides the SSH-only surfaces. The identity file and the setup guide have
 // no meaning when guest commands can only travel through the Tart guest agent.
-// Offers the guest-agent install only where it is actionable: a running VM whose
-// last command had to fall back to SSH. VMs already on the agent get nothing.
-function agentInstallButton(vm, name, notRunning) {
-  const checked = vm.sshCheckedAt && !vm.sshCheckedAt.startsWith("0001");
-  if (!checked || vm.agentOk || vm.state !== "running") return "";
-  return '<button class="ghost" onclick="installAgent(\'' + name + '\')"' + notRunning +
-    ' title="Install the Tart guest agent so this VM stops needing SSH">Install agent</button>';
+// Always shown (regardless of current agent/SSH status) so it's available as
+// soon as a VM is running, not just once a check has already flagged it as
+// needed.
+function agentInstallButton(name, notRunning) {
+  return '<button onclick="closeRowMenus();installAgent(\'' + name + '\')"' + notRunning +
+    ' title="Install the Tart guest agent so this VM stops needing SSH">Install Agent</button>';
+}
+
+// ---- row "⋯" menu ----
+// Positioned in JS (fixed, viewport coordinates) rather than pure CSS so it
+// can flip above the button near the bottom of the table — a plain CSS
+// dropdown gets clipped by the table wrapper's scroll region for the last
+// couple of rows, forcing a scroll to see it.
+//
+// openRowMenuName tracks which row (if any) should stay open across a
+// re-render (renderTable runs on every SSE push, which would otherwise close
+// the menu itself a few seconds after opening it — see the call in
+// renderTable). closeRowMenus is the ONLY thing that clears it — a re-render
+// calls positionRowMenu directly, not closeRowMenus, so it never does.
+let openRowMenuName = null;
+function closeRowMenus() {
+  document.querySelectorAll(".row-menu.open").forEach(el => el.classList.remove("open"));
+  openRowMenuName = null;
+}
+function toggleRowMenu(evt, name) {
+  evt.stopPropagation();
+  const wasOpenForThis = openRowMenuName === name;
+  closeRowMenus();
+  if (wasOpenForThis) return;
+  openRowMenuName = name;
+  positionRowMenu(name);
+}
+function positionRowMenu(name) {
+  const wrap = document.getElementById("rowmenu-" + name);
+  if (!wrap) { openRowMenuName = null; return; } // row no longer in the (filtered) table
+  wrap.classList.add("open");
+  const btn = wrap.querySelector(".row-menu-btn");
+  const list = wrap.querySelector(".row-menu-list");
+  const rect = btn.getBoundingClientRect();
+  const gap = 4;
+  const menuHeight = list.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const openUpward = spaceBelow < menuHeight + gap && rect.top > menuHeight + gap;
+  list.style.top = (openUpward ? rect.top - menuHeight - gap : rect.bottom + gap) + "px";
+  list.style.right = (window.innerWidth - rect.right) + "px";
+}
+document.addEventListener("click", closeRowMenus);
+window.addEventListener("resize", closeRowMenus);
+
+async function autoEnrollVM(name) {
+  if (!confirm("Run the MDM auto-enroll script on \"" + name + "\"?\n\nThis runs the VM (if stopped), pushes a fresh enrollment profile, and drives it through Install/Enroll — no further confirmation once started.")) return;
+  try {
+    const res = await api("/api/vm/auto-enroll", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) throw new Error("request failed (" + res.status + ")");
+    toast("Auto enroll", "Started for " + name + " — progress and result show in the Logs tab; a banner also appears here once it finishes.", "ok");
+  } catch (err) {
+    toast("Auto enroll", err.message, "bad");
+  }
+}
+
+// Jumps to VM Management's "Edit a VM" section with this VM preselected.
+function editVMShortcut(name) {
+  showTab("vmm");
+  document.getElementById("editSelect").value = name;
+  loadVMInfo();
+}
+
+// Same confirm()+delete flow as the "Delete a VM" panel's button, just
+// reachable straight from a row instead of via a select first.
+async function deleteVMFromRow(name) {
+  if (!confirm("Permanently delete VM \"" + name + "\"? This cannot be undone.")) return;
+  try {
+    const res = await api("/api/vm/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const d = await res.json();
+    if (d.error) toast("Delete failed", d.error, "bad");
+    else toast("Delete", name + " deleted.", "", "panel-tart-logs");
+  } catch (e) { toast("Delete failed", e.message, "bad"); }
 }
 
 async function installAgent(name) {
@@ -2590,12 +2688,25 @@ function renderTable(vms) {
       '<td class="acts"><div class="row-actions">' +
         '<button onclick="act(\'run\',\'' + n + '\')"' + busy + '>Run</button>' +
         '<button class="danger" onclick="act(\'stop\',\'' + n + '\')"' + stopDisabled + '>Stop</button>' +
-        '<button class="ghost" onclick="getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
-        agentInstallButton(vm, n, notRunning) +
-        '<button class="vnc" onclick="openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Screen</button>' +
-        '<button class="ghost" onclick="openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit</button>' +
+        '<div class="row-menu" id="rowmenu-' + n + '">' +
+          '<button class="ghost row-menu-btn" onclick="toggleRowMenu(event,\'' + n + '\')" title="More actions">⋯</button>' +
+          '<div class="row-menu-list">' +
+            '<button onclick="closeRowMenus();getInfo(\'' + n + '\')"' + notRunning + '>Get info</button>' +
+            agentInstallButton(n, notRunning) +
+            '<button onclick="closeRowMenus();openVNC(\'' + esc(vm.ip) + '\',\'' + esc(effUser) + '\')"' + noScreen + '>Start Screen Sharing</button>' +
+            '<button onclick="closeRowMenus();openEditModal(\'' + n + '\')" title="Edit notes and tags">Edit Tags</button>' +
+            '<button onclick="closeRowMenus();editVMShortcut(\'' + n + '\')" title="Go to Edit a VM in VM Management">Edit VM</button>' +
+            '<button onclick="closeRowMenus();autoEnrollVM(\'' + n + '\')" title="Run (if stopped), install the MDM profile, and enroll">Auto Enroll VM (experimental)</button>' +
+            '<button class="danger" onclick="closeRowMenus();deleteVMFromRow(\'' + n + '\')" title="Permanently delete this VM">Delete VM</button>' +
+          '</div>' +
+        '</div>' +
       '</div></td></tr>';
   }).join("");
+  // The row HTML above is fully regenerated on every SSE push, which would
+  // otherwise silently close an open "⋯" menu a few seconds after opening it
+  // (every server broadcast, not a real dismissal) — reapply it if it's still
+  // valid for the newly-rendered rows.
+  if (openRowMenuName) positionRowMenu(openRowMenuName);
 }
 
 // keep "time remaining" ticking between server pushes (but not when the
@@ -2842,8 +2953,13 @@ function fillMgmtSelects(vms) {
   if (!running.length) {
     document.getElementById("mdmTarget").innerHTML = '<option value="">Start the base VM first</option>';
   }
+  fillOne("prepTarget", running);
+  if (!running.length) {
+    document.getElementById("prepTarget").innerHTML = '<option value="">Start the base VM first</option>';
+  }
   renderJamfProfiles();
   updateMdmCopyButton(vms);
+  updatePrepGoldenButton(vms);
 }
 
 function updateMdmCopyButton(vms) {
@@ -2855,8 +2971,6 @@ function updateMdmCopyButton(vms) {
 async function copyMdmProfile() {
   const name = document.getElementById("mdmTarget").value;
   const profileId = document.getElementById("mdmProfileSelect").value;
-  const sshUser = document.getElementById("mdmSshUser").value.trim();
-  const sshPassword = document.getElementById("mdmSshPassword").value;
   const status = document.getElementById("mdmCopyStatus");
 
   if (mdmCopyInFlight) return;
@@ -2867,13 +2981,9 @@ async function copyMdmProfile() {
   updateMdmCopyButton();
   status.textContent = "Connecting and copying profile…";
   try {
-    const payload = { name, profileId };
-    if (sshUser) payload.sshUser = sshUser;
-    if (sshPassword) payload.sshPassword = sshPassword;
-
     const res = await api("/api/vm/mdm-profile", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ name, profileId })
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error((data.stage ? data.stage + ": " : "") + (data.error || "copy failed"));
@@ -2886,6 +2996,68 @@ async function copyMdmProfile() {
   }
 }
 el("copyMdmBtn").onclick = copyMdmProfile;
+
+let prepGoldenInFlight = false;
+function updatePrepGoldenButton(vms) {
+  const btn = document.getElementById("prepGoldenBtn");
+  const hasRunningVM = (vms || (latest && latest.vms) || []).some(v => !isOCI(v.source) && v.state === "running");
+  btn.disabled = prepGoldenInFlight || !hasRunningVM;
+}
+
+async function prepGoldenImage() {
+  const name = document.getElementById("prepTarget").value;
+  const status = document.getElementById("prepGoldenStatus");
+  if (prepGoldenInFlight) return;
+  if (!name) { status.textContent = "Start and select a base VM first."; return; }
+
+  prepGoldenInFlight = true;
+  updatePrepGoldenButton();
+  status.textContent = "Started — watch " + name + "'s screen (Screen Sharing) for the Automation prompt and the Accessibility toggle.";
+  try {
+    const res = await api("/api/vm/prep-golden-image", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) throw new Error("request failed (" + res.status + ")");
+    status.textContent = "Running for " + name + " — progress and result show in the Logs tab; a banner also appears here once it finishes.";
+  } catch (err) {
+    status.textContent = "Failed to start — " + err.message;
+  } finally {
+    prepGoldenInFlight = false;
+    updatePrepGoldenButton();
+  }
+}
+el("prepGoldenBtn").onclick = prepGoldenImage;
+el("checkCompatBtn").onclick = checkEnrollReadiness;
+
+const READINESS_LABELS = {
+  enabled: "Enabled", disabled: "Disabled",
+  granted: "Granted", not_granted: "Not granted",
+  present: "Present", absent: "Not present",
+  unknown: "Unknown"
+};
+function readinessPill(label, state, goodVal, badVal) {
+  const cls = state === goodVal ? "readiness-ok" : (state === badVal ? "readiness-bad" : "");
+  const text = READINESS_LABELS[state] || state;
+  return '<span class="readiness-pill ' + cls + '">' + label + ': ' + text + '</span>';
+}
+async function checkEnrollReadiness() {
+  const name = document.getElementById("prepTarget").value;
+  const box = document.getElementById("prepReadiness");
+  if (!name) { box.innerHTML = '<span class="muted">Select a VM to check.</span>'; return; }
+  box.innerHTML = '<span class="muted">Checking…</span>';
+  try {
+    const res = await api("/api/vm/enroll-readiness?name=" + encodeURIComponent(name));
+    if (!res.ok) throw new Error("request failed (" + res.status + ")");
+    const d = await res.json();
+    box.innerHTML =
+      readinessPill("Autologin", d.autologin, "enabled", "disabled") +
+      readinessPill("Accessibility", d.accessibility, "granted", "not_granted") +
+      readinessPill("Profile", d.profile, "present", "absent");
+  } catch (err) {
+    box.innerHTML = '<span class="muted">Check failed — ' + err.message + '</span>';
+  }
+}
 
 let createMode = "clone";
 function setCreateMode(mode) {
@@ -2905,6 +3077,7 @@ function updateCreateMode() {
   document.getElementById("linuxField").style.display = clone ? "none" : "";
   document.getElementById("createFieldsGrid").style.display = oci ? "none" : "";
   document.getElementById("createChecks").style.display = oci ? "none" : "";
+  document.getElementById("createAutoEnrollField").style.display = clone ? "" : "none";
   document.getElementById("ociField").style.display = oci ? "" : "none";
   document.getElementById("createBtn").textContent = oci ? "Pull Image" : "Create VMs";
 }
@@ -2934,7 +3107,8 @@ el("createBtn").onclick = async () => {
     diskSize: num("createDisk"),
     display: str("createDisplay"),
     randomMac: document.getElementById("createRandMac").checked,
-    randomSerial: document.getElementById("createRandSerial").checked
+    randomSerial: document.getElementById("createRandSerial").checked,
+    autoEnroll: mode === "clone" && document.getElementById("createAutoEnroll").checked
   };
   if (mode === "clone" && !body.source) { toast("Create", "Pick a source VM to clone.", "bad"); return; }
   try {
@@ -3042,7 +3216,31 @@ function renderLogs(logs) {
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
+// Fires a banner the first time each "enroll" / "prep-golden" task is seen no
+// longer running — these can take minutes with nothing on screen otherwise,
+// so without this the only way to know one finished is to go check the Logs
+// tab. Runs once (notifiedTaskIds) per task id, from wherever renderTasks is
+// called (every SSE push includes the live task list).
+let notifiedTaskIds = new Set();
+function notifyFinishedAutoEnrollTasks(tasks) {
+  (tasks || []).forEach(t => {
+    if ((t.kind !== "enroll" && t.kind !== "prep-golden") || t.status === "running" || notifiedTaskIds.has(t.id)) return;
+    notifiedTaskIds.add(t.id);
+    const label = t.kind === "prep-golden" ? "Golden image prep" : "Auto enroll";
+    if (t.error) {
+      toast(label, t.target + ": " + t.error, "bad");
+    } else {
+      toast(label, t.target + (t.status === "cancelled" ? " cancelled." : " finished successfully."), t.status === "cancelled" ? "" : "ok");
+    }
+    if (t.kind === "prep-golden") {
+      const sel = document.getElementById("prepTarget");
+      if (sel && sel.value === t.target) checkEnrollReadiness();
+    }
+  });
+}
+
 function renderTasks(tasks) {
+  notifyFinishedAutoEnrollTasks(tasks);
   const c = document.getElementById("tasks");
   if (c) {
     if (!tasks || !tasks.length) { c.innerHTML = '<div class="muted">No recent create/clone operations.</div>'; }

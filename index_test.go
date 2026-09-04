@@ -28,9 +28,33 @@ func TestDashboardContainsJamfProfileControls(t *testing.T) {
 	for _, want := range []string{
 		`id="jamfProfileRows"`, `id="addJamfProfileBtn"`, `id="saveJamfProfileBtn"`,
 		`id="jamfBaseUrl"`, `id="jamfInvitationCode"`, `id="mdmProfileSelect"`,
-		`id="mdmSshUser"`, `id="mdmSshPassword"`, `id="mdmTarget"`,
+		`id="mdmTarget"`,
 		`id="copyMdmBtn"`, `/api/vm/mdm-profile`, `~/Desktop/mdm_enroll.mobileconfig`,
 		`placeholder="https://tenant.jamfcloud.com"`, `Enter the value after invitation=, not the full URL`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+	// The per-call SSH override fields were removed deliberately: this panel
+	// always uses the target VM's own SSH credentials (or the Configuration
+	// defaults), never a separately-typed override.
+	for _, unwanted := range []string{`id="mdmSshUser"`, `id="mdmSshPassword"`} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("dashboard still has removed control %q", unwanted)
+		}
+	}
+}
+
+func TestDashboardContainsPrepGoldenImageControls(t *testing.T) {
+	b, err := content.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`id="prepTarget"`, `id="prepGoldenBtn"`, `id="prepGoldenStatus"`,
+		`/api/vm/prep-golden-image`, `Enable Auto-Enrollment Capabilities on Base VM`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboard missing %q", want)
@@ -359,4 +383,3 @@ func TestJamfCommandControlsAndSchedulerOptions(t *testing.T) {
 		}
 	}
 }
-

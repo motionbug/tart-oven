@@ -41,7 +41,7 @@ import (
 //go:embed index.html README.md CHANGELOG.md
 var content embed.FS
 
-const version = "1.51"
+const version = "1.52"
 
 // ---------------------------------------------------------------------------
 // Editable constants.
@@ -456,6 +456,8 @@ type VM struct {
 	MDMEnrolled  bool      `json:"mdmEnrolled,omitempty"`  // guest reports an active MDM enrollment
 	MDMServer    string    `json:"mdmServer,omitempty"`    // raw MDM check-in URL from the guest
 	MDMCheckedAt time.Time `json:"mdmCheckedAt,omitempty"` // zero means never probed, which renders as unknown
+
+	AutoEnroll bool `json:"autoEnroll,omitempty"` // set at clone time; next boot (manual or scheduler) runs the MDM auto-enroll script once
 
 	Notes       string   `json:"notes,omitempty"`       // user-entered notes for tracking/inventory
 	Tags        []string `json:"tags,omitempty"`        // user-defined tags for grouping/filtering
@@ -1521,6 +1523,22 @@ func (m *Manager) doRun(name, trigger string) {
 
 	m.refreshMDMStatus(name)
 	m.broadcast()
+
+	// A VM cloned with "Auto enroll at boot" runs the MDM enrollment script
+	// once it's up, whether this boot was the scheduler's or a manual Run —
+	// that's the whole point of the flag. Skip it if already enrolled so a
+	// VM that re-runs later (e.g. the scheduler cycling back to it) doesn't
+	// redo an enrollment it already has. The trigger != "auto-enroll" guard
+	// stops this from firing a second time when it was autoEnroll itself
+	// that called doRun to boot a stopped VM — that caller runs the
+	// enrollment script right after doRun returns, so re-triggering here
+	// would enroll the same VM twice concurrently.
+	m.mu.Lock()
+	needsEnroll := vm.AutoEnroll && !vm.MDMEnrolled
+	m.mu.Unlock()
+	if needsEnroll && trigger != "auto-enroll" {
+		m.runAutoEnrollTask(name, trigger)
+	}
 }
 
 // sshPriorityShutdownCommand is the guest command run when "Prioritize shutdown
@@ -2148,6 +2166,7 @@ type createReq struct {
 	Display      string `json:"display"`
 	RandomMac    bool   `json:"randomMac"`
 	RandomSerial bool   `json:"randomSerial"`
+	AutoEnroll   bool   `json:"autoEnroll"` // clone-only: flag the VM so its next boot runs the MDM auto-enroll script
 }
 
 // buildSetArgs assembles `tart set` args, omitting anything not provided.
@@ -2205,6 +2224,17 @@ func (m *Manager) createVMs(req createReq) {
 			if len(setArgs) > 2 { // more than just "set <name>"
 				err = m.runInto(t, setArgs...)
 			}
+		}
+		if err == nil && req.AutoEnroll {
+			m.mu.Lock()
+			vm := m.vms[name]
+			if vm == nil {
+				vm = &VM{Name: name}
+				m.vms[name] = vm
+			}
+			vm.AutoEnroll = true
+			m.save()
+			m.mu.Unlock()
 		}
 		m.finishTask(t, err)
 		if releasable, released := maybeReleaseGoMemory(runtimeGoMemory{}); released {
@@ -3031,6 +3061,43 @@ func (m *Manager) routes() *http.ServeMux {
 	})
 
 	mux.HandleFunc("/api/vm/mdm-profile", m.handleMDMProfile)
+
+	// Runs the VM if stopped (or reuses it if already running), pushes a fresh
+	// enrollment profile, and drives the guest through Install/Enroll — the
+	// same flow "Auto enroll at boot" triggers automatically, but on demand.
+	mux.HandleFunc("/api/vm/auto-enroll", func(w http.ResponseWriter, r *http.Request) {
+		name, err := decodeName(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		go m.runAutoEnrollTask(name, "manual")
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
+	// One-time-per-base-VM: primes the Automation + Accessibility grants
+	// auto-enroll's UI scripting depends on. See "Enable Auto-Enrollment
+	// Capabilities on Base VM" in VM Management.
+	mux.HandleFunc("/api/vm/prep-golden-image", func(w http.ResponseWriter, r *http.Request) {
+		name, err := decodeName(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		go m.runPrepGoldenImageTask(name)
+		writeJSON(w, map[string]bool{"ok": true})
+	})
+
+	// Read-only compatibility snapshot for the Target VM dropdown in "Enable
+	// Auto-Enrollment Capabilities on Base VM" — see checkEnrollReadiness.
+	mux.HandleFunc("/api/vm/enroll-readiness", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, m.checkEnrollReadiness(r.Context(), name))
+	})
 
 	// Install or update tart (downloads the latest release either way).
 	mux.HandleFunc("/api/install-tart", func(w http.ResponseWriter, r *http.Request) {

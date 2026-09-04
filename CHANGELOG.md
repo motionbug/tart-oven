@@ -12,6 +12,48 @@ A few terms appear throughout:
 - **MDM / Jamf Pro** — the system that manages enrolled Macs. Tart Oven can prepare
   a VM for enrollment and report whether a guest is enrolled.
 
+## 1.52 — 2026-09-04
+
+### Auto-enrolling VMs at boot (experimental)
+
+- **Added unattended MDM enrollment.** "Auto Enroll VM" (dashboard row menu)
+  pushes a fresh enrollment profile to a guest's Desktop and drives System
+  Settings through Install → Enroll entirely over SSH/AppleScript — no Screen
+  Sharing, no manual clicks. Runs the VM first if it's stopped; refreshes the
+  MDM column once it's done, whichever way it goes. Also handles the full
+  first-boot Setup Assistant walkthrough when `--random-serial` gives a clone
+  a hardware identity macOS treats as never provisioned (not needed on
+  macOS 27+, which skips that walkthrough itself).
+- **Added "Auto enroll at first boot"** next to Random serial in
+  Clone-from-template: a clone made with it checked runs the same flow on its
+  own the next time it boots, scheduler-triggered or manual, with no further
+  intervention.
+- **Added a base-VM prep step** ("Enable Auto-Enrollment Capabilities on Base
+  VM", under Prepare base VM for Jamf) that walks a base VM through the two
+  one-time TCC grants this automation depends on, with live Autologin /
+  Accessibility / enrollment-profile status pills and an on-VM + in-app
+  confirmation once both are granted. One-time per base VM — every clone
+  inherits the result.
+
+### Dashboard cleanup
+
+- Collapsed Get info, Install Agent, Start Screen Sharing, and Edit Tags into
+  a "⋯" menu next to Run/Stop, freeing up width for the SSH and Info columns.
+  Added Edit VM and Delete VM shortcuts to the same menu. Install Agent no
+  longer waits for a failed check to appear.
+- Fixed the menu closing itself a few seconds after opening (it was being
+  wiped by the periodic dashboard refresh) and being clipped/requiring a
+  scroll for the last couple of rows in the table.
+- MDM column now shows the console URL without its `https://` prefix.
+
+### Also
+
+- Removed the redundant per-call SSH override fields from "Deploy MDM
+  Enrollment Profile" — it already falls back to the target VM's own
+  credentials or the Configuration defaults.
+- Moved the Setup Wizard panel to the top of Configuration and removed its
+  duplicate button from the header bar.
+
 ## 1.51 — 2026-08-27
 
 ### VM table cleanup
